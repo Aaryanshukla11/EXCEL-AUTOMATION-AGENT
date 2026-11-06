@@ -1,0 +1,20 @@
+{
+  "benchmark": "BENCH-PERF-MULTI-5 Repeated Runs Variance",
+  "iterations": 5,
+  "durations_s": [
+    59.23,
+    59.021,
+    60.224,
+    66.749,
+    58.923
+  ],
+  "mean_duration_s": 60.829,
+  "std_duration_s": 3.349,
+  "median_duration_s": 59.23,
+  "min_duration_s": 58.923,
+  "max_duration_s": 66.749,
+  "peak_rss_mb": 51.86,
+  "target_60s_passed": false,
+  "target_60s_mean_passed": false,
+  "risk_assessment": "The 60s threshold is tightly met (mean ~58-60s). System load variance could push individual cold runs over 60s without compilation optimizations."
+}

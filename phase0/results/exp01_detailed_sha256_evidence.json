@@ -1,0 +1,196 @@
+{
+  "fixture_analyzed": "BENCH-FIDELITY-01-RICH.xlsm",
+  "total_parts_in_original": 14,
+  "targeted_parts_count": 2,
+  "non_targeted_parts_count": 12,
+  "openpyxl_candidate_a": {
+    "non_targeted_byte_parity_count": 7,
+    "non_targeted_byte_parity_pct": 58.33,
+    "parts_lost": [
+      "xl/drawings/drawing1.xml",
+      "xl/slicers/slicer1.xml"
+    ],
+    "parts_re_serialized": [
+      "[Content_Types].xml",
+      "docProps/core.xml",
+      "xl/_rels/workbook.xml.rels"
+    ]
+  },
+  "archive_patcher_candidate_c": {
+    "non_targeted_byte_parity_count": 12,
+    "non_targeted_byte_parity_pct": 100.0,
+    "parts_lost": [],
+    "parts_re_serialized": []
+  },
+  "critical_rigor_caveat": "100% preservation achieved by Candidate C applies strictly to the tested fixture parts. The Custom Archive Part-Patcher is NOT universally safe: if an append shifts named ranges, conditional formatting spans, or drawing anchor coordinates, raw XML part-patching without full dependency-graph propagation can lead to silent reference corruption. Candidate C is a viable architectural candidate requiring formal validation in Phase 1, not a universally proven solution.",
+  "detailed_part_matrix": [
+    {
+      "part_name": "[Content_Types].xml",
+      "is_targeted_part": false,
+      "original_sha256": "3dc9d1baab3090153bda09a583183376b4f3d8c238f6aca7fd3d6562f31af5e7",
+      "original_size": 1103,
+      "openpyxl_sha256": "3a6d680898c534a64dd7ff09e2626f89061749839513b1d69d967fcaf4ca18d5",
+      "openpyxl_status": "ALTERED_NON_TARGET",
+      "openpyxl_non_targeted_parity": false,
+      "patcher_sha256": "3dc9d1baab3090153bda09a583183376b4f3d8c238f6aca7fd3d6562f31af5e7",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "_rels/.rels",
+      "is_targeted_part": false,
+      "original_sha256": "c545941ba36c15fcdce4ae4568c663f3ced1a2226ad5082d3fd66b178bfac11a",
+      "original_size": 531,
+      "openpyxl_sha256": "c545941ba36c15fcdce4ae4568c663f3ced1a2226ad5082d3fd66b178bfac11a",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "c545941ba36c15fcdce4ae4568c663f3ced1a2226ad5082d3fd66b178bfac11a",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "docProps/app.xml",
+      "is_targeted_part": false,
+      "original_sha256": "209fca6b00afe72a5029754b94be5953d8f16d96f67130325566b9366ad4ccc5",
+      "original_size": 205,
+      "openpyxl_sha256": "209fca6b00afe72a5029754b94be5953d8f16d96f67130325566b9366ad4ccc5",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "209fca6b00afe72a5029754b94be5953d8f16d96f67130325566b9366ad4ccc5",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "docProps/core.xml",
+      "is_targeted_part": false,
+      "original_sha256": "b67a1f325a186d6e331fd7702167a8a416042f2ec2d88b9268855d56c392a776",
+      "original_size": 555,
+      "openpyxl_sha256": "8ee645fa054e71822136ac89321e6045cd8226ab126b16fc04cf9511c2d8aa97",
+      "openpyxl_status": "ALTERED_NON_TARGET",
+      "openpyxl_non_targeted_parity": false,
+      "patcher_sha256": "b67a1f325a186d6e331fd7702167a8a416042f2ec2d88b9268855d56c392a776",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/_rels/workbook.xml.rels",
+      "is_targeted_part": false,
+      "original_sha256": "26ad8fcc38d41229833e624496df364492772697ad2e5d6696e1738f05ba225f",
+      "original_size": 504,
+      "openpyxl_sha256": "e6d9d563f40d236ff24ef2782db1e2f616838c86551db89eb441948beaf2a5ad",
+      "openpyxl_status": "ALTERED_NON_TARGET",
+      "openpyxl_non_targeted_parity": false,
+      "patcher_sha256": "26ad8fcc38d41229833e624496df364492772697ad2e5d6696e1738f05ba225f",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/drawings/drawing1.xml",
+      "is_targeted_part": false,
+      "original_sha256": "e805230aab54d521a314391b162bb330906a3f6b1ca81f1ff67c33977481cede",
+      "original_size": 88,
+      "openpyxl_sha256": null,
+      "openpyxl_status": "STRIPPED_LOST",
+      "openpyxl_non_targeted_parity": false,
+      "patcher_sha256": "e805230aab54d521a314391b162bb330906a3f6b1ca81f1ff67c33977481cede",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/slicers/slicer1.xml",
+      "is_targeted_part": false,
+      "original_sha256": "ce70278337a24e0458a9eff2a9620b2a7933877741569a738431c8c2141b2782",
+      "original_size": 98,
+      "openpyxl_sha256": null,
+      "openpyxl_status": "STRIPPED_LOST",
+      "openpyxl_non_targeted_parity": false,
+      "patcher_sha256": "ce70278337a24e0458a9eff2a9620b2a7933877741569a738431c8c2141b2782",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/styles.xml",
+      "is_targeted_part": false,
+      "original_sha256": "ceabc26839ae8c5285c667366bffa538562f76e219eb4f2f5188626232d96900",
+      "original_size": 2550,
+      "openpyxl_sha256": "ceabc26839ae8c5285c667366bffa538562f76e219eb4f2f5188626232d96900",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "ceabc26839ae8c5285c667366bffa538562f76e219eb4f2f5188626232d96900",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/tables/table1.xml",
+      "is_targeted_part": true,
+      "original_sha256": "6070526a4e610cadd19deac2e7c7731a7df035603e83dca545c25ecb86d40d5a",
+      "original_size": 487,
+      "openpyxl_sha256": "6070526a4e610cadd19deac2e7c7731a7df035603e83dca545c25ecb86d40d5a",
+      "openpyxl_status": "MUTATED_TARGET",
+      "openpyxl_non_targeted_parity": null,
+      "patcher_sha256": "bc4905338e375f03637cb2dfb564b5553788628b89208cd12df1ad5ee3af82de",
+      "patcher_status": "MUTATED_TARGET",
+      "patcher_non_targeted_parity": null
+    },
+    {
+      "part_name": "xl/theme/theme1.xml",
+      "is_targeted_part": false,
+      "original_sha256": "d15e8ebf78ef7b9720839d7ae8fdc81a7df5bc24706d8e137df61a5683c358d9",
+      "original_size": 10140,
+      "openpyxl_sha256": "d15e8ebf78ef7b9720839d7ae8fdc81a7df5bc24706d8e137df61a5683c358d9",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "d15e8ebf78ef7b9720839d7ae8fdc81a7df5bc24706d8e137df61a5683c358d9",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/vbaProject.bin",
+      "is_targeted_part": false,
+      "original_sha256": "c12399a308043a50bb12f38726262b4002329d9bed0bd72d24ffe3afa837adce",
+      "original_size": 38,
+      "openpyxl_sha256": "c12399a308043a50bb12f38726262b4002329d9bed0bd72d24ffe3afa837adce",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "c12399a308043a50bb12f38726262b4002329d9bed0bd72d24ffe3afa837adce",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/workbook.xml",
+      "is_targeted_part": false,
+      "original_sha256": "d9cf551f0e8a186e3695def898c63e7822f5628a2b3fc1a87e38af24cebe51e9",
+      "original_size": 550,
+      "openpyxl_sha256": "d9cf551f0e8a186e3695def898c63e7822f5628a2b3fc1a87e38af24cebe51e9",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "d9cf551f0e8a186e3695def898c63e7822f5628a2b3fc1a87e38af24cebe51e9",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/worksheets/_rels/sheet1.xml.rels",
+      "is_targeted_part": false,
+      "original_sha256": "0c7c616f135c59146ea63fb37e101ce5a2f1b6a5a0b1cbd1c3a00ee982538341",
+      "original_size": 237,
+      "openpyxl_sha256": "0c7c616f135c59146ea63fb37e101ce5a2f1b6a5a0b1cbd1c3a00ee982538341",
+      "openpyxl_status": "MATCH_IDENTICAL",
+      "openpyxl_non_targeted_parity": true,
+      "patcher_sha256": "0c7c616f135c59146ea63fb37e101ce5a2f1b6a5a0b1cbd1c3a00ee982538341",
+      "patcher_status": "MATCH_IDENTICAL",
+      "patcher_non_targeted_parity": true
+    },
+    {
+      "part_name": "xl/worksheets/sheet1.xml",
+      "is_targeted_part": true,
+      "original_sha256": "114e759b10dce656a3a87ea494c7db4c9702ef96e04fba7a678bf8ef61bfe823",
+      "original_size": 4020,
+      "openpyxl_sha256": "c54b0a9332100b36f52d9c04763068ef7f9b915ee094dd47ee9f7f74867b8bee",
+      "openpyxl_status": "MUTATED_TARGET",
+      "openpyxl_non_targeted_parity": null,
+      "patcher_sha256": "12dda6cde1a60748dd13a552fad03b9936c8354cf1eec921d5a5919921a4efec",
+      "patcher_status": "MUTATED_TARGET",
+      "patcher_non_targeted_parity": null
+    }
+  ]
+}

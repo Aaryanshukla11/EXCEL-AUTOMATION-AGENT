@@ -1,0 +1,19 @@
+{
+  "experiment": "EXP-03: Formula Recalculation & Headless Value Cache",
+  "timestamp": "2026-11-21 04:02:12",
+  "results": {
+    "stripped_candidate_a": {
+      "pandas_sum_c2": null,
+      "pandas_prod_d2": null,
+      "openpyxl_data_only_c2": null,
+      "headless_readers_returned_empty": true
+    },
+    "hybrid_candidate_b": {
+      "pandas_sum_c2": "30",
+      "pandas_prod_d2": "200",
+      "openpyxl_data_only_c2": "30",
+      "headless_readers_returned_computed": true
+    }
+  },
+  "empirical_findings": "Confirmed hypothesis: Headless consumers (pandas, openpyxl data_only) read strictly the cached <v> tag. When <v> is omitted under deferred fullCalcOnLoad='1', pandas reads NaN and openpyxl returns None. Populating pre-computed <v> tags in Candidate B resolves headless ingestion."
+}

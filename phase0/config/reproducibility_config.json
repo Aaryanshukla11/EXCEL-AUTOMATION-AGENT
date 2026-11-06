@@ -1,0 +1,21 @@
+{
+  "random_seed": 42,
+  "numpy_seed": 42,
+  "temperature": 0.0,
+  "repetition_protocol": {
+    "cold_runs": 10,
+    "warm_runs": 10,
+    "task_repetitions": 5
+  },
+  "statistical_parameters": {
+    "confidence_level": 0.95,
+    "bootstrap_resamples": 2000,
+    "outlier_threshold_iqr": 3.0,
+    "significance_threshold_alpha": 0.01
+  },
+  "frozen_schemas": {
+    "tool_schema_version": "JSON Schema 2020-12 v1.2",
+    "operation_contract_version": "1.2",
+    "discovery_manifest_version": "1.2"
+  }
+}

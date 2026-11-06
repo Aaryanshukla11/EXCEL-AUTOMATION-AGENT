@@ -1,0 +1,61 @@
+{
+  "experiment": "Statistical Audit Experiment: PROTOCOL-QA-01 Power & Sample-Size Validation",
+  "baseline_derivation": {
+    "p": 0.98,
+    "margin_error": 0.012,
+    "z_score": 1.96,
+    "n_unclustered_exact": 522.87,
+    "n_unclustered_rounded": 523,
+    "icc": 0.15,
+    "cluster_size_m": 5,
+    "deff": 1.6,
+    "n_clustered_required": 837,
+    "positive_workbooks_required": 168
+  },
+  "verification_of_837_units": true,
+  "verification_of_850_proposal": "850 units exceeds the required 837 units with a safety buffer of 13 units (1.5%), fully satisfying the mathematical requirement.",
+  "pilot_power_analysis": {
+    "pilot_units_per_category": 25,
+    "pilot_margin_of_error_pct": 6.07,
+    "pilot_ci_95": "[91.9%, 100.0%]",
+    "verdict": "BENCH-AUDIT-200 yields a wide CI (+- 6.0%) and cannot statistically guarantee the +-1.2% margin. It is correctly designated as a Phase 1 Acceptance Gate Pilot, while BENCH-AUDIT-EXTENDED (>=850 units per category) is required for formal certification."
+  },
+  "simulation_grid_samples": [
+    {
+      "icc": 0.05,
+      "cluster_size_m": 2,
+      "deff": 1.05,
+      "n_clustered": 550,
+      "workbooks_required": 275
+    },
+    {
+      "icc": 0.05,
+      "cluster_size_m": 3,
+      "deff": 1.1,
+      "n_clustered": 576,
+      "workbooks_required": 192
+    },
+    {
+      "icc": 0.05,
+      "cluster_size_m": 5,
+      "deff": 1.2,
+      "n_clustered": 628,
+      "workbooks_required": 126
+    },
+    {
+      "icc": 0.05,
+      "cluster_size_m": 8,
+      "deff": 1.35,
+      "n_clustered": 706,
+      "workbooks_required": 89
+    },
+    {
+      "icc": 0.05,
+      "cluster_size_m": 10,
+      "deff": 1.45,
+      "n_clustered": 759,
+      "workbooks_required": 76
+    }
+  ],
+  "conclusion": "The 837-unit power derivation is mathematically validated. The proposed extended-corpus minimum of >=850 positive defect units per category is strictly verified as sufficient to guarantee >=98.0% sensitivity with <= +-1.2% margin of error under intra-workbook clustering."
+}

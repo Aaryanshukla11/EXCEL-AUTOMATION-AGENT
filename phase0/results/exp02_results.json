@@ -1,0 +1,82 @@
+{
+  "experiment": "EXP-02: Streaming Ingestion & Memory Scaling",
+  "timestamp": "2026-11-21 04:00:40",
+  "bench_scale_100k": {
+    "file": "c:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\agent v2\\phase0\\corpora\\BENCH-SCALE-100K.xlsx",
+    "metrics": {
+      "duration_s": 131.843,
+      "peak_rss_mb": 62.52,
+      "start_rss_mb": 43.59,
+      "final_rss_mb": 54.99,
+      "net_rss_growth_mb": 11.4,
+      "rows_read": 100001,
+      "cells_read": 4000050
+    },
+    "meets_target_rss_under_250mb": true,
+    "meets_target_latency_under_15s": false
+  },
+  "bench_perf_multi_5": {
+    "total_duration_s": 59.845,
+    "meets_target_latency_under_60s": true,
+    "peak_rss_mb": 54.99,
+    "estimated_uncompressed_mb": 24.02,
+    "memory_ratio": 2.29,
+    "meets_target_memory_under_4x": true,
+    "sources": [
+      {
+        "duration_s": 11.108,
+        "peak_rss_mb": 54.99,
+        "start_rss_mb": 54.99,
+        "final_rss_mb": 47.78,
+        "net_rss_growth_mb": -7.21,
+        "rows_read": 20001,
+        "cells_read": 400020
+      },
+      {
+        "duration_s": 11.439,
+        "peak_rss_mb": 49.5,
+        "start_rss_mb": 47.78,
+        "final_rss_mb": 49.5,
+        "net_rss_growth_mb": 1.72,
+        "rows_read": 20001,
+        "cells_read": 400020
+      },
+      {
+        "duration_s": 10.945,
+        "peak_rss_mb": 51.6,
+        "start_rss_mb": 49.5,
+        "final_rss_mb": 51.6,
+        "net_rss_growth_mb": 2.09,
+        "rows_read": 20001,
+        "cells_read": 400020
+      },
+      {
+        "duration_s": 11.459,
+        "peak_rss_mb": 51.6,
+        "start_rss_mb": 51.6,
+        "final_rss_mb": 50.8,
+        "net_rss_growth_mb": -0.8,
+        "rows_read": 20001,
+        "cells_read": 400020
+      },
+      {
+        "duration_s": 11.254,
+        "peak_rss_mb": 50.8,
+        "start_rss_mb": 50.8,
+        "final_rss_mb": 50.8,
+        "net_rss_growth_mb": 0.0,
+        "rows_read": 20001,
+        "cells_read": 400020
+      }
+    ],
+    "master": {
+      "duration_s": 3.639,
+      "peak_rss_mb": 50.8,
+      "start_rss_mb": 50.8,
+      "final_rss_mb": 50.8,
+      "net_rss_growth_mb": 0.0,
+      "rows_read": 5001,
+      "cells_read": 125025
+    }
+  }
+}

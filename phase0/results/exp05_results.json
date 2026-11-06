@@ -1,0 +1,21 @@
+{
+  "experiment": "EXP-05: Format Compatibility & Opaque VBA Stream Preservation",
+  "timestamp": "2026-11-21 04:01:04",
+  "xlsx_support": {
+    "status": "SUCCESS",
+    "read_verified": true
+  },
+  "xlsm_vba_preservation": {
+    "vba_found": true,
+    "vba_hash_before": "c1bcd7b327670bd68ab63aa9e9954b5cd37233352202554609fc464456db9264",
+    "vba_hash_after": "c1bcd7b327670bd68ab63aa9e9954b5cd37233352202554609fc464456db9264",
+    "bitwise_sha256_parity": true
+  },
+  "xlsb_status": {
+    "xlsb_read_supported_in_runtime": false,
+    "pyxlsb_installed": false,
+    "calamine_installed": false,
+    "findings": "pyxlsb and calamine are not installed in the standard environment. Reading .xlsb requires adding pyxlsb or python-calamine as an explicit read-only dependency during Phase 1."
+  },
+  "overall_conclusion": "XLSX and XLSM read/write with 100% byte-for-byte opaque VBA preservation is confirmed. Ingestion of .xlsb source workbooks is technically viable but requires integrating pyxlsb or calamine as an approved read-only dependency in Release 1.0."
+}

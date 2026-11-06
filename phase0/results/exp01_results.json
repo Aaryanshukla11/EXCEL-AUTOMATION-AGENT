@@ -1,0 +1,29 @@
+{
+  "experiment": "EXP-01: OpenXML Part Preservation",
+  "timestamp": "2026-11-21 03:54:13",
+  "fixture": "c:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\agent v2\\phase0\\corpora\\BENCH-FIDELITY-01-RICH.xlsm",
+  "candidate_a": {
+    "candidate": "Candidate A: openpyxl DOM",
+    "duration_s": 0.2321,
+    "lost_parts_count": 2,
+    "lost_parts": [
+      "xl/drawings/drawing1.xml",
+      "xl/slicers/slicer1.xml"
+    ],
+    "vba_preserved": true,
+    "slicer_preserved": false,
+    "drawing_preserved": false,
+    "preservation_rate": 0.8571
+  },
+  "candidate_c": {
+    "candidate": "Candidate C: Custom Archive Part-Patcher",
+    "duration_s": 0.0216,
+    "lost_parts_count": 0,
+    "lost_parts": [],
+    "vba_preserved": true,
+    "slicer_preserved": true,
+    "drawing_preserved": true,
+    "preservation_rate": 1.0
+  },
+  "findings": "openpyxl DOM re-serialization strips non-standard parts (slicers, injected custom drawing parts) unless explicitly modeled. Custom Archive Part-Patcher achieves 100% part preservation by isolating mutation strictly to target sheet and table XML."
+}

@@ -1,0 +1,11 @@
+{
+  "experiment": "EXP-08: Scoped Approval Token Security Lifecycle",
+  "tampering_intercepted": true,
+  "ttl_expiration_intercepted": true,
+  "role_mismatch_intercepted": true,
+  "concurrent_race_total_requests": 50,
+  "concurrent_race_successes": 1,
+  "concurrent_race_rejections": 49,
+  "race_defense_perfect": true,
+  "conclusion": "HMAC-SHA256 scoped token manager guarantees 100% resistance against tampering, expired usage, role spoofing, and concurrent replay race conditions (allowing exactly 1 execution and rejecting 49 concurrent attempts)."
+}

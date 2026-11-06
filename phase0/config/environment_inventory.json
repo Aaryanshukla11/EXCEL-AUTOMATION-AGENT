@@ -1,0 +1,43 @@
+{
+  "inventory_timestamp": "2026-11-21T03:51:00+05:30",
+  "operating_system": {
+    "platform": "Windows",
+    "release": "11 Enterprise",
+    "architecture": "AMD64",
+    "filesystem": "NTFS",
+    "sync_client_present": true,
+    "sync_client_type": "Microsoft OneDrive"
+  },
+  "hardware": {
+    "cpu": "Intel/AMD x86_64",
+    "memory_total_gb": 16.0,
+    "storage_type": "NVMe PCIe SSD"
+  },
+  "runtime": {
+    "python_version": "3.13.7",
+    "python_implementation": "CPython",
+    "rust_available": false
+  },
+  "packages": {
+    "openpyxl": "3.1.5",
+    "et_xmlfile": "2.0.0",
+    "lxml": "6.1.3",
+    "pandas": "2.2.3",
+    "numpy": "2.2.6",
+    "scipy": "1.18.0",
+    "scikit-learn": "1.9.1",
+    "psutil": "7.2.2",
+    "jsonschema": "4.26.0",
+    "networkx": "3.7",
+    "defusedxml": false,
+    "pyxlsb": false,
+    "calamine": false,
+    "pycel": false
+  },
+  "phase0_isolation_boundary": {
+    "workspace_dir": "c:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\agent v2\\phase0",
+    "production_application_code": false,
+    "production_workbook_writes": false,
+    "macro_execution": false
+  }
+}
