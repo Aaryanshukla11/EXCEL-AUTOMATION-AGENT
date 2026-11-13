@@ -1,0 +1,37 @@
+[package]
+name = "excel_intel_rs"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance streaming OpenXML Excel parser in Rust with PyO3 bindings"
+
+[lib]
+name = "_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py312", "extension-module", "chrono"] }
+quick-xml = "0.36"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+chrono = "0.4"
+hashbrown = "0.14"
+uuid = { version = "1.10", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security"
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[lints.clippy]
+useless_conversion = "allow"
+
+
