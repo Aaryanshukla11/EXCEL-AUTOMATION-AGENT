@@ -91,6 +91,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
         let mut v_content = String::new();
         let mut f_content = String::new();
         let mut is_content = String::new();
+        let mut last_row_cells = 32;
 
         loop {
             match self.reader.read_event_into(&mut buf) {
@@ -110,7 +111,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                         current_cell_col = 0;
                         current_row = Some(RowRecord {
                             row: row_num,
-                            cells: Vec::new(),
+                            cells: Vec::with_capacity(last_row_cells),
                         });
                     } else if name.as_ref() == b"c" {
                         current_cell_col += 1;
@@ -218,7 +219,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                             let resolved_f_type = if f_type.is_none() && f_si.is_some() {
                                 Some("shared".to_string())
                             } else {
-                                f_type.clone()
+                                f_type.take()
                             };
 
                             let cell_val = match current_cell_type.as_deref() {
@@ -249,44 +250,54 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                                     let trimmed = v_content.trim();
                                     if trimmed.is_empty() {
                                         CellValue::Empty
-                                    } else if let Ok(num) = trimmed.parse::<f64>() {
+                                    } else {
                                         let is_date = current_cell_style
                                             .map(|s| self.styles.is_date_style(s))
                                             .unwrap_or(false);
 
                                         if is_date {
-                                            match parse_excel_serial(num, self.is_1904) {
-                                                Ok(dt) => CellValue::DateTime(dt),
-                                                Err(_) => CellValue::Float(num),
+                                            if let Ok(num) = trimmed.parse::<f64>() {
+                                                match parse_excel_serial(num, self.is_1904) {
+                                                    Ok(dt) => CellValue::DateTime(dt),
+                                                    Err(_) => CellValue::Float(num),
+                                                }
+                                            } else {
+                                                validate_cell_string(trimmed)?;
+                                                CellValue::Text(std::mem::take(&mut v_content))
                                             }
-                                        } else if num.fract() == 0.0
-                                            && num >= i64::MIN as f64
-                                            && num <= i64::MAX as f64
-                                        {
-                                            CellValue::Int(num as i64)
+                                        } else if let Ok(int_val) = trimmed.parse::<i64>() {
+                                            CellValue::Int(int_val)
+                                        } else if let Ok(num) = trimmed.parse::<f64>() {
+                                            if num.fract() == 0.0
+                                                && num >= i64::MIN as f64
+                                                && num <= i64::MAX as f64
+                                            {
+                                                CellValue::Int(num as i64)
+                                            } else {
+                                                CellValue::Float(num)
+                                            }
                                         } else {
-                                            CellValue::Float(num)
+                                            validate_cell_string(trimmed)?;
+                                            CellValue::Text(std::mem::take(&mut v_content))
                                         }
-                                    } else {
-                                        validate_cell_string(trimmed)?;
-                                        CellValue::Text(std::mem::take(&mut v_content))
                                     }
                                 }
                             };
 
                             row.cells.push(CellRecord {
                                 col: current_cell_col,
-                                coordinate: current_cell_coord.clone(),
-                                cell_type: current_cell_type.clone(),
+                                coordinate: std::mem::take(&mut current_cell_coord),
+                                cell_type: current_cell_type.take(),
                                 value: cell_val,
                                 formula: formula_opt,
                                 formula_type: resolved_f_type,
-                                formula_ref: f_ref.clone(),
+                                formula_ref: f_ref.take(),
                                 formula_si: f_si,
                             });
                         }
                     } else if name.as_ref() == b"row" {
                         if let Some(row) = current_row.take() {
+                            last_row_cells = row.cells.len().max(8);
                             chunk.push(row);
                             self.processed_rows += 1;
 
@@ -352,4 +363,77 @@ pub fn col_to_name(mut col: u32) -> String {
         col /= 26;
     }
     name.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared_strings::SharedStringsTable;
+    use crate::styles::StylesTable;
+    use std::io::Cursor;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn test_col_coordinate_conversion() {
+        assert_eq!(parse_col_from_ref("A1"), 1);
+        assert_eq!(parse_col_from_ref("B10"), 2);
+        assert_eq!(parse_col_from_ref("Z100"), 26);
+        assert_eq!(parse_col_from_ref("AA1"), 27);
+        assert_eq!(parse_col_from_ref("AZ1"), 52);
+        assert_eq!(parse_col_from_ref("BA1"), 53);
+        assert_eq!(parse_col_from_ref("XFD1048576"), 16384);
+    }
+
+    #[test]
+    fn test_col_name_roundtrip() {
+        assert_eq!(col_to_name(1), "A");
+        assert_eq!(col_to_name(26), "Z");
+        assert_eq!(col_to_name(27), "AA");
+        assert_eq!(col_to_name(52), "AZ");
+        assert_eq!(col_to_name(53), "BA");
+        assert_eq!(col_to_name(16384), "XFD");
+
+        for col in [1, 2, 26, 27, 52, 53, 702, 703, 16384] {
+            let name = col_to_name(col);
+            assert_eq!(parse_col_from_ref(&name), col);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_independent_worksheet_streaming() {
+        let xml_template = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <sheetData>
+                <row r="1"><c r="A1"><v>100</v></c><c r="B1"><v>200</v></c></row>
+                <row r="2"><c r="A2"><v>300</v></c><c r="B2"><v>400</v></c></row>
+            </sheetData>
+        </worksheet>"#;
+
+        let sst = Arc::new(SharedStringsTable::new());
+        let styles = Arc::new(StylesTable::default());
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let sst_clone = Arc::clone(&sst);
+            let styles_clone = Arc::clone(&styles);
+            let xml_data = xml_template.as_bytes().to_vec();
+
+            handles.push(thread::spawn(move || {
+                let cursor = Cursor::new(xml_data);
+                let mut parser =
+                    StreamingWorksheetParser::new(cursor, sst_clone, styles_clone, false);
+                let chunk = parser.next_row_chunk(10).unwrap().unwrap();
+                assert_eq!(chunk.len(), 2);
+                assert_eq!(chunk[0].row, 1);
+                assert_eq!(chunk[1].row, 2);
+                assert_eq!(chunk[0].cells.len(), 2);
+                assert_eq!(chunk[1].cells.len(), 2);
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
 }

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator, MutableMapping
 import os
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -12,7 +12,7 @@ from excel_intel.config import PlatformConfig
 
 
 @pytest.fixture
-def clean_env() -> Generator[dict[str, str], None, None]:
+def clean_env() -> Generator[MutableMapping[str, str], None, None]:
     """Fixture that isolates tests from ambient environment variables prefixed with EXCEL_INTEL_."""
     old_env = os.environ.copy()
     # Strip any EXCEL_INTEL_ variables
@@ -20,7 +20,7 @@ def clean_env() -> Generator[dict[str, str], None, None]:
         if key.startswith("EXCEL_INTEL_"):
             del os.environ[key]
 
-    yield os.environ 
+    yield os.environ
 
     os.environ.clear()
     os.environ.update(old_env)

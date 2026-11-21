@@ -159,9 +159,18 @@ impl LruCache {
 
         let old_payload =
             std::mem::replace(&mut self.slots[idx].payload, String::new().into_boxed_str());
-        self.slots[idx].generation = self.slots[idx].generation.wrapping_add(1);
-        self.slots[idx].next = self.free_head;
-        self.free_head = Some(nz_idx);
+
+        // Harden generation counter: retire slot if generation overflows
+        if let Some(next_gen) = self.slots[idx].generation.checked_add(1) {
+            self.slots[idx].generation = next_gen;
+            self.slots[idx].next = self.free_head;
+            self.free_head = Some(nz_idx);
+        } else {
+            // Permanently retire slot: do not return to free_head, preventing wraparound/stale reuse
+            self.slots[idx].generation = u32::MAX;
+            self.slots[idx].next = None;
+            self.slots[idx].prev = None;
+        }
 
         Some(old_payload.into_string())
     }
@@ -217,11 +226,18 @@ impl LruCache {
 
             self.detach(tail_nz);
 
-            // Free payload memory and place slot onto free list
+            // Free payload memory and place slot onto free list if generation does not overflow
             self.slots[tail_i].payload = String::new().into_boxed_str();
-            self.slots[tail_i].generation = self.slots[tail_i].generation.wrapping_add(1);
-            self.slots[tail_i].next = self.free_head;
-            self.free_head = Some(tail_nz);
+            if let Some(next_gen) = self.slots[tail_i].generation.checked_add(1) {
+                self.slots[tail_i].generation = next_gen;
+                self.slots[tail_i].next = self.free_head;
+                self.free_head = Some(tail_nz);
+            } else {
+                // Permanently retire slot: do not return to free_head, preventing wraparound/stale reuse
+                self.slots[tail_i].generation = u32::MAX;
+                self.slots[tail_i].next = None;
+                self.slots[tail_i].prev = None;
+            }
         }
     }
 
@@ -380,6 +396,7 @@ impl SharedStringsTable {
 
         if is_tier2 {
             if self.spill_file.is_none() {
+                crate::memory_guard::check_memory_guard()?;
                 self.spill_file = Some(Mutex::new(ScratchSpillFile::new()?));
             }
 
@@ -408,6 +425,7 @@ impl SharedStringsTable {
                 offset: disk_offset | IS_TIER2_DISK_FLAG,
                 len: str_len,
             });
+            crate::memory_guard::record_attributable_alloc(std::mem::size_of::<StringEntry>())?;
         } else {
             let offset = self.tier1_buf.len() as u64;
             self.tier1_buf.extend_from_slice(bytes);
@@ -415,6 +433,9 @@ impl SharedStringsTable {
                 offset,
                 len: str_len,
             });
+            crate::memory_guard::record_attributable_alloc(
+                bytes.len() + std::mem::size_of::<StringEntry>(),
+            )?;
         }
 
         Ok(current_count as u32)
@@ -823,5 +844,39 @@ mod tests {
 
         let final_disk_reads = table_arc.disk_read_count();
         assert_eq!(final_disk_reads - initial_disk_reads, 1);
+    }
+
+    #[test]
+    fn test_generation_counter_overflow_permanently_retires_slot() {
+        let mut lru = LruCache::new();
+        lru.insert(1, 0, "first".to_string());
+        assert_eq!(lru.len(), 1);
+        assert_eq!(lru.slots.len(), 1);
+
+        // Manually simulate generation counter at u32::MAX
+        lru.slots[0].generation = u32::MAX;
+        // Update map entry to reflect this generation for valid lookup
+        if let Some(entry) = lru.map.get_mut(&1) {
+            entry.1 = u32::MAX;
+        }
+
+        // Remove item 1 — next_gen overflows, slot 0 must be retired permanently
+        let removed = lru.remove(1);
+        assert_eq!(removed, Some("first".to_string()));
+        assert_eq!(lru.len(), 0);
+        // Crucial invariant: free_head must NOT contain the overflowed slot
+        assert_eq!(lru.free_head, None);
+        assert_eq!(lru.slots[0].generation, u32::MAX);
+
+        // Inserting a new item must allocate a NEW slot in the arena, NOT reuse slot 0
+        lru.insert(2, 0, "second".to_string());
+        assert_eq!(lru.len(), 1);
+        assert_eq!(lru.slots.len(), 2); // Arena grew from 1 to 2 because slot 0 was retired!
+        assert_eq!(lru.slots[1].key, 2);
+        assert_eq!(lru.get(2), Some("second"));
+
+        // Stale handle with slot 0 cannot retrieve data
+        assert_eq!(lru.get(1), None);
+        lru.check_invariants();
     }
 }

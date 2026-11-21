@@ -123,6 +123,24 @@ impl WorkbookStreamReader {
         Ok(dict.into_py(py))
     }
 
+    pub fn read_package_part(&self, part_name: &str) -> PyResult<Option<String>> {
+        let mut zip_pkg = ZipPackageReader::open(&self.path)?;
+        zip_pkg.read_file_to_string(part_name).map_err(|e| e.into())
+    }
+
+    pub fn list_package_parts(&self) -> PyResult<Vec<String>> {
+        let zip_pkg = ZipPackageReader::open(&self.path)?;
+        Ok(zip_pkg.file_names())
+    }
+
+    pub fn get_sheet_path(&self, sheet_name: &str) -> Option<String> {
+        self.sheet_paths.get(sheet_name).cloned()
+    }
+
+    pub fn get_all_sheet_paths(&self) -> HashMap<String, String> {
+        self.sheet_paths.clone()
+    }
+
     #[pyo3(signature = (sheet_name_or_index, chunk_size = 1000))]
     pub fn stream_sheet(
         &self,
@@ -204,11 +222,11 @@ impl SheetChunkIterator {
                 let k_formula_si = pyo3::intern!(py, "formula_si");
                 let py_none = py.None();
 
-                let py_rows = PyList::empty_bound(py);
+                let mut py_rows = Vec::with_capacity(rows.len());
                 for row in rows {
                     let row_dict = PyDict::new_bound(py);
                     row_dict.set_item(k_row, row.row)?;
-                    let cells_list = PyList::empty_bound(py);
+                    let mut cells_list = Vec::with_capacity(row.cells.len());
 
                     for cell in row.cells {
                         let cell_dict = PyDict::new_bound(py);
@@ -234,42 +252,47 @@ impl SheetChunkIterator {
                         let is_formula_cell = cell.formula.is_some()
                             || cell.formula_type.is_some()
                             || cell.formula_si.is_some();
-                        if let Some(f) = cell.formula {
-                            cell_dict.set_item(k_formula, f)?;
-                        } else {
-                            cell_dict.set_item(k_formula, &py_none)?;
-                        }
 
                         if is_formula_cell {
+                            if let Some(f) = cell.formula {
+                                cell_dict.set_item(k_formula, f)?;
+                            } else {
+                                cell_dict.set_item(k_formula, &py_none)?;
+                            }
+
                             cell_dict.set_item(k_cached_value, &val_obj)?;
+
+                            if let Some(ft) = cell.formula_type {
+                                cell_dict.set_item(k_formula_type, ft)?;
+                            } else {
+                                cell_dict.set_item(k_formula_type, &py_none)?;
+                            }
+
+                            if let Some(fr) = cell.formula_ref {
+                                cell_dict.set_item(k_formula_ref, fr)?;
+                            } else {
+                                cell_dict.set_item(k_formula_ref, &py_none)?;
+                            }
+
+                            if let Some(si) = cell.formula_si {
+                                cell_dict.set_item(k_formula_si, si)?;
+                            } else {
+                                cell_dict.set_item(k_formula_si, &py_none)?;
+                            }
                         } else {
+                            cell_dict.set_item(k_formula, &py_none)?;
                             cell_dict.set_item(k_cached_value, &py_none)?;
-                        }
-
-                        if let Some(ft) = cell.formula_type {
-                            cell_dict.set_item(k_formula_type, ft)?;
-                        } else {
                             cell_dict.set_item(k_formula_type, &py_none)?;
-                        }
-
-                        if let Some(fr) = cell.formula_ref {
-                            cell_dict.set_item(k_formula_ref, fr)?;
-                        } else {
                             cell_dict.set_item(k_formula_ref, &py_none)?;
-                        }
-
-                        if let Some(si) = cell.formula_si {
-                            cell_dict.set_item(k_formula_si, si)?;
-                        } else {
                             cell_dict.set_item(k_formula_si, &py_none)?;
                         }
 
-                        cells_list.append(cell_dict)?;
+                        cells_list.push(cell_dict);
                     }
-                    row_dict.set_item(k_cells, cells_list)?;
-                    py_rows.append(row_dict)?;
+                    row_dict.set_item(k_cells, PyList::new_bound(py, cells_list))?;
+                    py_rows.push(row_dict);
                 }
-                Ok(Some(py_rows.into_py(py)))
+                Ok(Some(PyList::new_bound(py, py_rows).into_py(py)))
             }
             None => Ok(None),
         }

@@ -95,6 +95,9 @@ class TestScratchLifecycle:
         wb_path = tmp_path / "active_scratch.xlsx"
         create_minimal_large_workbook(wb_path)
 
+        # Clear any pre-existing stale artifacts in shared temp dir
+        scavenge_scratch_dir()
+
         reader = StreamingWorkbookReader(wb_path)
         chunks = list(reader.stream_sheet(0))
         assert chunks[0][0]["cells"][0]["value"] == "str_102000"

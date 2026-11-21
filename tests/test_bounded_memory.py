@@ -28,7 +28,7 @@ class TestBoundedMemory:
         assert isinstance(ws, int)
         assert ws > 0
         # Normal Python process working set is between 10 MB and 200 MB
-        assert ws < 235 * 1024 * 1024
+        assert ws < 235_000_000
 
     def test_memory_guard_normal_operation(self) -> None:
         """Verify check_memory_guard succeeds when memory is healthy."""
@@ -60,8 +60,8 @@ class TestBoundedMemory:
         for chunk in reader.stream_sheet(0, chunk_size=2000):
             row_count += len(chunk)
             current_ws = get_process_working_set_bytes()
-            # Working set must remain well below defensive 235 MB ceiling
-            assert current_ws < 235 * 1024 * 1024
+            # Working set must remain well below contractual 235 MB warning threshold
+            assert current_ws < 235_000_000
 
         assert row_count == 20_000
         final_ws = get_process_working_set_bytes()

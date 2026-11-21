@@ -68,6 +68,22 @@ class StreamingWorkbookReader:
         """Inspect workbook metadata without streaming worksheets."""
         return self._native.inspect()
 
+    def read_package_part(self, part_name: str) -> Optional[str]:
+        """Securely read an OpenXML package part via M02 ZipPackageReader."""
+        return self._native.read_package_part(part_name)
+
+    def list_package_parts(self) -> list[str]:
+        """List all parts contained in the OpenXML package."""
+        return self._native.list_package_parts()
+
+    def get_sheet_path(self, sheet_name: str) -> Optional[str]:
+        """Get the internal package path for a worksheet by name."""
+        return self._native.get_sheet_path(sheet_name)
+
+    def get_all_sheet_paths(self) -> dict[str, str]:
+        """Get mapping of all sheet names to their internal package paths."""
+        return self._native.get_all_sheet_paths()
+
     def stream_sheet(
         self,
         sheet: Union[str, int] = 0,

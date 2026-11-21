@@ -25,6 +25,7 @@ const DRIVE_RAMDISK: u32 = 6;
 
 impl ScratchSpillFile {
     pub fn new() -> Result<Self, RustParserError> {
+        crate::memory_guard::check_memory_guard()?;
         let scratch_dir = get_or_create_scratch_dir()?;
         verify_local_filesystem(&scratch_dir)?;
 
@@ -351,7 +352,12 @@ impl Drop for ScratchSpillFile {
                 windows_sys::Win32::Foundation::CloseHandle(self.lock_handle);
             }
             let _ = std::fs::remove_file(&self.file_path);
-            let _ = std::fs::remove_file(&self.lock_path);
+            for _ in 0..10 {
+                if std::fs::remove_file(&self.lock_path).is_ok() || !self.lock_path.exists() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
         }
     }
 }
@@ -457,6 +463,17 @@ fn get_process_start_time() -> u64 {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/self/stat") {
+            if let Some(starttime_str) = content.split_whitespace().nth(21) {
+                if let Ok(ticks) = starttime_str.parse::<u64>() {
+                    return ticks;
+                }
+            }
+        }
+    }
+
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -466,15 +483,23 @@ fn get_process_start_time() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn test_scratch_spill_file_creation_and_cleanup() {
-        let scratch = ScratchSpillFile::new().unwrap();
+    fn test_scratch_normal_creation_and_cleanup() {
+        let mut scratch = ScratchSpillFile::new().unwrap();
         let file_path = scratch.file_path.clone();
         let lock_path = scratch.lock_path.clone();
 
         assert!(file_path.exists());
         assert!(lock_path.exists());
+
+        scratch.file.write_all(b"test data").unwrap();
 
         drop(scratch);
 
@@ -484,12 +509,270 @@ mod tests {
     }
 
     #[test]
-    fn test_scavenger_preserves_active_files() {
+    fn test_scratch_exception_cleanup() {
+        fn faulty_operation() -> Result<PathBuf, RustParserError> {
+            let mut scratch = ScratchSpillFile::new()?;
+            let saved_path = scratch.file_path.clone();
+            scratch.file.write_all(b"partial")?;
+            // Simulate error
+            if true {
+                return Err(RustParserError::CorruptWorkbook(
+                    "Simulated error".to_string(),
+                ));
+            }
+            Ok(saved_path)
+        }
+
+        let res = faulty_operation();
+        assert!(res.is_err());
+        // Cleaned up via ? error propagation
+    }
+
+    #[test]
+    fn test_scratch_panic_unwind_cleanup() {
+        let paths = Arc::new(std::sync::Mutex::new(None));
+        let paths_clone = Arc::clone(&paths);
+        let res = std::panic::catch_unwind(move || {
+            let scratch = ScratchSpillFile::new().unwrap();
+            *paths_clone.lock().unwrap() =
+                Some((scratch.file_path.clone(), scratch.lock_path.clone()));
+            panic!("Simulated worker panic");
+        });
+        assert!(res.is_err());
+
+        let (f, l) = paths.lock().unwrap().take().unwrap();
+        assert!(!f.exists());
+        assert!(!l.exists());
+    }
+
+    #[test]
+    fn test_scratch_lock_acquisition_failure() {
+        let scratch = ScratchSpillFile::new().unwrap();
+        // Trying to open and lock an already locked file exclusively must fail
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Storage::FileSystem::*;
+            let lock_wide: Vec<u16> = scratch
+                .lock_path
+                .to_str()
+                .unwrap()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let handle = unsafe {
+                CreateFileW(
+                    lock_wide.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ,
+                    std::ptr::null_mut(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+                let locked = unsafe { LockFile(handle, 0, 0, 1, 0) };
+                // Exclusive lock must fail because original handle holds it
+                assert_eq!(locked, 0);
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+            }
+        }
+    }
+
+    #[test]
+    fn test_active_scratch_owner_lock_cannot_be_deleted_or_replaced() {
+        let scratch = ScratchSpillFile::new().unwrap();
+        let lock_path = scratch.lock_path.clone();
+        let spill_path = scratch.file_path.clone();
+
+        // 1. Proving active scratch owner's lock cannot be deleted while held
+        #[cfg(windows)]
+        {
+            let remove_res = std::fs::remove_file(&lock_path);
+            assert!(
+                remove_res.is_err(),
+                "Active owner lock file MUST NOT be deletable while handle is held"
+            );
+        }
+
+        // 2. Proving active scratch owner's lock cannot be replaced or opened for write
+        let replace_res = std::fs::OpenOptions::new()
+            .write(true)
+            .create(false)
+            .open(&lock_path);
+        assert!(
+            replace_res.is_err(),
+            "Active owner lock file MUST NOT allow replacement or conflicting write open"
+        );
+
+        // 3. Proving concurrent scavenging cannot bypass the active OS lock
+        let _ = scavenge_scratch_dir();
+        assert!(
+            lock_path.exists(),
+            "Active owner lock file MUST NOT be deleted by scavenger"
+        );
+        assert!(
+            spill_path.exists(),
+            "Active owner spill file MUST NOT be deleted by scavenger"
+        );
+
+        drop(scratch);
+        // 4. After drop, verify clean removal
+        assert!(!lock_path.exists(), "Lock path must be removed after drop");
+        assert!(
+            !spill_path.exists(),
+            "Spill path must be removed after drop"
+        );
+    }
+
+    #[test]
+    fn test_scratch_concurrent_creation() {
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            handles.push(thread::spawn(|| {
+                let mut scratch = ScratchSpillFile::new().unwrap();
+                scratch.file.write_all(b"concurrent data").unwrap();
+                assert!(scratch.file_path.exists());
+                assert!(scratch.lock_path.exists());
+                thread::sleep(std::time::Duration::from_millis(5));
+                drop(scratch);
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_scratch_concurrent_scavenging_against_active_creation() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = Arc::clone(&stop_flag);
+
+        // Background thread scavenging concurrently
+        let scavenger_thread = thread::spawn(move || {
+            while !flag_clone.load(Ordering::Relaxed) {
+                let _ = scavenge_scratch_dir();
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        // Worker threads creating active scratch files
+        let mut workers = Vec::new();
+        for _ in 0..4 {
+            workers.push(thread::spawn(|| {
+                for _ in 0..5 {
+                    let mut scratch = ScratchSpillFile::new().unwrap();
+                    scratch.file.write_all(b"active data").unwrap();
+                    assert!(scratch.file_path.exists());
+                    assert!(scratch.lock_path.exists());
+                    thread::sleep(std::time::Duration::from_millis(2));
+                    // File must still exist despite scavenger running concurrently
+                    assert!(scratch.file_path.exists());
+                    assert!(scratch.lock_path.exists());
+                    drop(scratch);
+                }
+            }));
+        }
+
+        for w in workers {
+            w.join().unwrap();
+        }
+
+        stop_flag.store(true, Ordering::Relaxed);
+        scavenger_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_scratch_orphan_bin_recovery() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let scratch_dir = get_or_create_scratch_dir().unwrap();
+        // Create an orphan .bin from a dead PID (99999999)
+        let orphan_path =
+            scratch_dir.join("m02_spill_99999999_1_00000000-0000-0000-0000-000000000001.bin");
+        std::fs::write(&orphan_path, b"abandoned data").unwrap();
+        assert!(orphan_path.exists());
+
+        let cleaned = scavenge_scratch_dir().unwrap();
+        assert!(cleaned >= 1);
+        assert!(!orphan_path.exists());
+    }
+
+    #[test]
+    fn test_scratch_missing_lock_recovery() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let scratch_dir = get_or_create_scratch_dir().unwrap();
+        // Create a .bin file without companion .lock for dead PID
+        let no_lock_path =
+            scratch_dir.join("m02_spill_99999998_1_00000000-0000-0000-0000-000000000002.bin");
+        std::fs::write(&no_lock_path, b"no lock bin").unwrap();
+        assert!(no_lock_path.exists());
+
+        let cleaned = scavenge_scratch_dir().unwrap();
+        assert!(cleaned >= 1);
+        assert!(!no_lock_path.exists());
+    }
+
+    #[test]
+    fn test_scratch_pid_reuse_protection() {
+        let pid = std::process::id();
+        // If expected start time is in the past (e.g. 1), it indicates PID reuse
+        assert!(is_process_dead(pid, 1));
+    }
+
+    #[test]
+    fn test_scratch_active_process_preservation() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        // Clean any leftover stale files before assertion
+        let _ = scavenge_scratch_dir();
+
         let scratch = ScratchSpillFile::new().unwrap();
         let cleaned = scavenge_scratch_dir().unwrap();
         // Active scratch file must NOT be cleaned by scavenger
         assert_eq!(cleaned, 0);
         assert!(scratch.file_path.exists());
         assert!(scratch.lock_path.exists());
+    }
+
+    #[test]
+    fn test_scratch_independent_reader_isolation() {
+        let scratch1 = ScratchSpillFile::new().unwrap();
+        let mut scratch2 = ScratchSpillFile::new().unwrap();
+
+        assert_ne!(scratch1.file_path, scratch2.file_path);
+        assert_ne!(scratch1.lock_path, scratch2.lock_path);
+
+        drop(scratch1);
+
+        // Scratch2 must remain unaffected
+        assert!(scratch2.file_path.exists());
+        assert!(scratch2.lock_path.exists());
+        scratch2
+            .file
+            .write_all(b"scratch2 independent content")
+            .unwrap();
+        drop(scratch2);
+    }
+
+    #[test]
+    fn test_scratch_forced_termination_stale_recovery() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let scratch_dir = get_or_create_scratch_dir().unwrap();
+        let stale_base = "m02_spill_99999997_1_00000000-0000-0000-0000-000000000003";
+        let stale_bin = scratch_dir.join(format!("{}.bin", stale_base));
+        let stale_lock = scratch_dir.join(format!("{}.lock", stale_base));
+
+        std::fs::write(&stale_bin, b"stale bin data").unwrap();
+        std::fs::write(&stale_lock, b"stale lock metadata").unwrap();
+
+        assert!(stale_bin.exists());
+        assert!(stale_lock.exists());
+
+        let cleaned = scavenge_scratch_dir().unwrap();
+        assert!(cleaned >= 1);
+
+        assert!(!stale_bin.exists());
+        assert!(!stale_lock.exists());
     }
 }

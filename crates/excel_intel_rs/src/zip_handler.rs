@@ -236,6 +236,7 @@ impl ZipPackageReader {
                 self.max_decompression_ratio,
                 n as u64,
             )?;
+            crate::memory_guard::record_attributable_alloc(n)?;
             let text_chunk = std::str::from_utf8(&chunk[..n]).map_err(|e| {
                 RustParserError::CorruptWorkbook(format!(
                     "Invalid UTF-8 in zip entry {}: {}",
