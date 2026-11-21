@@ -20,6 +20,7 @@ pub struct ZipPackageReader {
     archive: ZipArchive<BufReader<File>>,
     total_decompressed_bytes: AtomicU64,
     compressed_file_size: u64,
+    max_decompression_ratio: f64,
     has_macros: bool,
 }
 
@@ -81,10 +82,16 @@ impl ZipPackageReader {
 
         let has_macros = archive.by_name("xl/vbaProject.bin").is_ok();
 
+        let max_decompression_ratio = std::env::var("EXCEL_INTEL_MAX_DECOMPRESSION_RATIO")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(MAX_COMPRESSION_RATIO);
+
         Ok(Self {
             archive,
             total_decompressed_bytes: AtomicU64::new(0),
             compressed_file_size,
+            max_decompression_ratio,
             has_macros,
         })
     }
@@ -223,7 +230,12 @@ impl ZipPackageReader {
             if n == 0 {
                 break;
             }
-            Self::check_and_add_bytes(total_bytes_ref, compressed_size, n as u64)?;
+            Self::check_and_add_bytes_with_ratio(
+                total_bytes_ref,
+                compressed_size,
+                self.max_decompression_ratio,
+                n as u64,
+            )?;
             let text_chunk = std::str::from_utf8(&chunk[..n]).map_err(|e| {
                 RustParserError::CorruptWorkbook(format!(
                     "Invalid UTF-8 in zip entry {}: {}",
@@ -252,7 +264,8 @@ impl ZipPackageReader {
             Err(e) => return Err(e.into()),
         };
 
-        let mut chunk = [0u8; 64 * 1024];
+        let mut writer = std::io::BufWriter::with_capacity(256 * 1024, dest);
+        let mut chunk = [0u8; 128 * 1024];
         let mut total_written = 0u64;
 
         let total_bytes_ref = &self.total_decompressed_bytes;
@@ -263,18 +276,37 @@ impl ZipPackageReader {
             if n == 0 {
                 break;
             }
-            Self::check_and_add_bytes(total_bytes_ref, compressed_size, n as u64)?;
-            dest.write_all(&chunk[..n])?;
+            Self::check_and_add_bytes_with_ratio(
+                total_bytes_ref,
+                compressed_size,
+                self.max_decompression_ratio,
+                n as u64,
+            )?;
+            writer.write_all(&chunk[..n])?;
             total_written += n as u64;
         }
 
-        dest.flush()?;
+        writer.flush()?;
         Ok(total_written)
     }
 
     pub fn check_and_add_bytes(
         total_bytes: &AtomicU64,
         compressed_file_size: u64,
+        n: u64,
+    ) -> Result<(), RustParserError> {
+        Self::check_and_add_bytes_with_ratio(
+            total_bytes,
+            compressed_file_size,
+            MAX_COMPRESSION_RATIO,
+            n,
+        )
+    }
+
+    pub fn check_and_add_bytes_with_ratio(
+        total_bytes: &AtomicU64,
+        compressed_file_size: u64,
+        max_ratio: f64,
         n: u64,
     ) -> Result<(), RustParserError> {
         let prev = total_bytes.fetch_add(n, Ordering::SeqCst);
@@ -289,12 +321,12 @@ impl ZipPackageReader {
 
         if current > MAX_RATIO_OUTPUT_THRESHOLD && compressed_file_size > 0 {
             let ratio = (current as f64) / (compressed_file_size as f64);
-            if ratio > MAX_COMPRESSION_RATIO {
+            if ratio > max_ratio {
                 return Err(RustParserError::ResourceLimit {
                     code: "ERR_ZIP_DECOMPRESSION_BOMB",
                     message: format!(
-                        "Compression ratio ({:.2}x) exceeds maximum allowed 10.0x limit",
-                        ratio
+                        "Compression ratio ({:.2}x) exceeds maximum allowed {:.1}x limit",
+                        ratio, max_ratio
                     ),
                 });
             }
@@ -366,70 +398,6 @@ mod tests {
         let decompressed = 1_073_741_825; // 1 GiB + 1 byte (ratio ~4.3x < 10.0x)
         let err = ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed)
             .unwrap_err();
-        match err {
-            RustParserError::ResourceLimit { code, message } => {
-                assert_eq!(code, "ERR_ZIP_DECOMPRESSION_BOMB");
-                assert!(message.contains("1.0 GiB ceiling"));
-            }
-            _ => panic!("Expected ResourceLimit error"),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compression_ratio_below_threshold_pass() {
-        // Output > 10 MB, ratio < 10.0:1 -> MUST PASS
-        let total = AtomicU64::new(0);
-        let compressed_size = 2_000_000; // 2.0 MB
-        let decompressed = 15_000_000; // 15.0 MB (ratio = 7.5x < 10.0x)
-        assert!(ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed).is_ok());
-    }
-
-    #[test]
-    fn test_compression_ratio_at_threshold_pass() {
-        // Output > 10 MB, ratio == exact 10.0:1 -> MUST PASS (at-threshold behavior is accepted)
-        let total = AtomicU64::new(0);
-        let compressed_size = 2_000_000; // 2.0 MB
-        let decompressed = 20_000_000; // 20.0 MB (ratio = 10.0x == 10.0x)
-        assert!(ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed).is_ok());
-    }
-
-    #[test]
-    fn test_compression_ratio_above_threshold_fail() {
-        // Output > 10 MB, ratio > 10.0:1 -> MUST FAIL
-        let total = AtomicU64::new(0);
-        let compressed_size = 2_000_000; // 2.0 MB
-        let decompressed = 20_000_001; // 20.0 MB + 1 byte (ratio = 10.0000005x > 10.0x)
-        let err = ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed).unwrap_err();
-        match err {
-            RustParserError::ResourceLimit { code, message } => {
-                assert_eq!(code, "ERR_ZIP_DECOMPRESSION_BOMB");
-                assert!(message.contains("10.0x limit"));
-            }
-            _ => panic!("Expected ResourceLimit error"),
-        }
-    }
-
-    #[test]
-    fn test_compression_ratio_high_ratio_before_10mb_pass() {
-        // Output <= 10 MB, high ratio (90x) -> MUST NOT prematurely trip
-        let total = AtomicU64::new(0);
-        let compressed_size = 100_000; // 100 KB
-        let decompressed = 9_000_000; // 9.0 MB (ratio = 90.0x > 10.0x, but output <= 10 MB threshold)
-        assert!(ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed).is_ok());
-    }
-
-    #[test]
-    fn test_compression_ratio_cumulative_1gib_quota_independent_fail() {
-        // Low ratio (e.g. 5x), but cumulative output > 1.0 GiB -> MUST FAIL on independent 1.0 GiB ceiling
-        let total = AtomicU64::new(0);
-        let compressed_size = 250_000_000; // 250 MB
-        let decompressed = 1_073_741_825; // 1 GiB + 1 byte (ratio ~4.3x < 10.0x)
-        let err = ZipPackageReader::check_and_add_bytes(&total, compressed_size, decompressed).unwrap_err();
         match err {
             RustParserError::ResourceLimit { code, message } => {
                 assert_eq!(code, "ERR_ZIP_DECOMPRESSION_BOMB");

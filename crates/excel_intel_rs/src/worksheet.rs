@@ -131,13 +131,19 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"r" {
                                 if let Ok(s) = std::str::from_utf8(&attr.value) {
-                                    current_cell_coord = s.to_string();
+                                    current_cell_coord.clear();
+                                    current_cell_coord.push_str(s);
                                     current_cell_col = parse_col_from_ref(s);
                                 }
                             } else if attr.key.as_ref() == b"t" {
-                                if let Ok(s) = std::str::from_utf8(&attr.value) {
-                                    current_cell_type = Some(s.to_string());
-                                }
+                                current_cell_type = match attr.value.as_ref() {
+                                    b"s" => Some("s".to_string()),
+                                    b"inlineStr" => Some("inlineStr".to_string()),
+                                    b"b" => Some("b".to_string()),
+                                    b"e" => Some("e".to_string()),
+                                    b"str" => Some("str".to_string()),
+                                    other => std::str::from_utf8(other).ok().map(|s| s.to_string()),
+                                };
                             } else if attr.key.as_ref() == b"s" {
                                 if let Ok(s) = std::str::from_utf8(&attr.value) {
                                     current_cell_style = s.parse().ok();
@@ -206,7 +212,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                             let formula_opt = if f_content.is_empty() {
                                 None
                             } else {
-                                Some(f_content.clone())
+                                Some(std::mem::take(&mut f_content))
                             };
 
                             let resolved_f_type = if f_type.is_none() && f_si.is_some() {
@@ -226,7 +232,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                                 }
                                 Some("inlineStr") => {
                                     validate_cell_string(&is_content)?;
-                                    CellValue::Text(is_content.clone())
+                                    CellValue::Text(std::mem::take(&mut is_content))
                                 }
                                 Some("b") => {
                                     let trimmed = v_content.trim();
@@ -234,10 +240,10 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                                         trimmed == "1" || trimmed.eq_ignore_ascii_case("true");
                                     CellValue::Bool(b_val)
                                 }
-                                Some("e") => CellValue::Error(v_content.trim().to_string()),
+                                Some("e") => CellValue::Error(std::mem::take(&mut v_content)),
                                 Some("str") => {
                                     validate_cell_string(&v_content)?;
-                                    CellValue::Text(v_content.clone())
+                                    CellValue::Text(std::mem::take(&mut v_content))
                                 }
                                 _ => {
                                     let trimmed = v_content.trim();
@@ -263,7 +269,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                                         }
                                     } else {
                                         validate_cell_string(trimmed)?;
-                                        CellValue::Text(trimmed.to_string())
+                                        CellValue::Text(std::mem::take(&mut v_content))
                                     }
                                 }
                             };
@@ -284,7 +290,7 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
                             chunk.push(row);
                             self.processed_rows += 1;
 
-                            if self.processed_rows.is_multiple_of(10_000) {
+                            if self.processed_rows.is_multiple_of(1_000) {
                                 check_memory_guard()?;
                             }
 
@@ -325,9 +331,9 @@ impl<R: BufRead> StreamingWorksheetParser<R> {
 
 pub fn parse_col_from_ref(cell_ref: &str) -> u32 {
     let mut col: u32 = 0;
-    for c in cell_ref.chars() {
-        if c.is_ascii_alphabetic() {
-            col = col * 26 + (c.to_ascii_uppercase() as u32 - 'A' as u32 + 1);
+    for &b in cell_ref.as_bytes() {
+        if b.is_ascii_alphabetic() {
+            col = col * 26 + (b.to_ascii_uppercase() - b'A' + 1) as u32;
         } else {
             break;
         }

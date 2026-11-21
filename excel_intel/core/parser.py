@@ -17,7 +17,10 @@ from excel_intel._rs import (
     SheetChunkIterator,
     UnsupportedFormatError,
     WorkbookStreamReader as _NativeReader,
+    py_check_memory_guard,
+    py_get_process_working_set_bytes,
     py_parse_excel_serial,
+    py_scavenge_scratch_dir,
     py_validate_cell_string,
 )
 
@@ -30,6 +33,16 @@ class StreamingWorkbookReader:
         if not self.path.exists():
             raise FileNotFoundError(f"Workbook file not found: {self.path}")
         self._native = _NativeReader(str(self.path))
+
+    def close(self) -> None:
+        """Explicitly release underlying native resources and scratch files."""
+        self._native = None
+
+    def __enter__(self) -> StreamingWorkbookReader:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     @property
     def sheet_names(self) -> list[str]:
@@ -89,10 +102,28 @@ def validate_cell_string(text: str) -> None:
     py_validate_cell_string(text)
 
 
+def get_process_working_set_bytes() -> int:
+    """Return process resident set size (working set) in bytes."""
+    return py_get_process_working_set_bytes()
+
+
+def check_memory_guard() -> None:
+    """Trigger memory guard check against defensive 235.0 MiB threshold."""
+    py_check_memory_guard()
+
+
+def scavenge_scratch_dir() -> int:
+    """Scavenge abandoned scratch spill and lock files; returns cleaned file count."""
+    return py_scavenge_scratch_dir()
+
+
 __all__ = [
     "StreamingWorkbookReader",
     "parse_excel_serial",
     "validate_cell_string",
+    "get_process_working_set_bytes",
+    "check_memory_guard",
+    "scavenge_scratch_dir",
     "ParserError",
     "PlatformResourceLimitError",
     "DateOutOfRangeError",

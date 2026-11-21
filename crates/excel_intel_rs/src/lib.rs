@@ -158,7 +158,7 @@ impl WorkbookStreamReader {
         let read_handle = scratch.file.try_clone().map_err(|e| {
             RustParserError::CorruptWorkbook(format!("Failed to clone scratch handle: {}", e))
         })?;
-        let buf_reader = BufReader::with_capacity(64 * 1024, read_handle);
+        let buf_reader = BufReader::with_capacity(256 * 1024, read_handle);
 
         let parser = StreamingWorksheetParser::new(
             buf_reader,
@@ -191,20 +191,33 @@ impl SheetChunkIterator {
     fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyObject>> {
         match self.parser.next_row_chunk(self.chunk_size)? {
             Some(rows) => {
+                let k_row = pyo3::intern!(py, "row");
+                let k_cells = pyo3::intern!(py, "cells");
+                let k_col = pyo3::intern!(py, "col");
+                let k_coordinate = pyo3::intern!(py, "coordinate");
+                let k_cell_type = pyo3::intern!(py, "cell_type");
+                let k_value = pyo3::intern!(py, "value");
+                let k_formula = pyo3::intern!(py, "formula");
+                let k_cached_value = pyo3::intern!(py, "cached_value");
+                let k_formula_type = pyo3::intern!(py, "formula_type");
+                let k_formula_ref = pyo3::intern!(py, "formula_ref");
+                let k_formula_si = pyo3::intern!(py, "formula_si");
+                let py_none = py.None();
+
                 let py_rows = PyList::empty_bound(py);
                 for row in rows {
                     let row_dict = PyDict::new_bound(py);
-                    row_dict.set_item("row", row.row)?;
+                    row_dict.set_item(k_row, row.row)?;
                     let cells_list = PyList::empty_bound(py);
 
                     for cell in row.cells {
                         let cell_dict = PyDict::new_bound(py);
-                        cell_dict.set_item("col", cell.col)?;
-                        cell_dict.set_item("coordinate", cell.coordinate)?;
+                        cell_dict.set_item(k_col, cell.col)?;
+                        cell_dict.set_item(k_coordinate, cell.coordinate)?;
                         if let Some(ref ct) = cell.cell_type {
-                            cell_dict.set_item("cell_type", ct)?;
+                            cell_dict.set_item(k_cell_type, ct)?;
                         } else {
-                            cell_dict.set_item("cell_type", py.None())?;
+                            cell_dict.set_item(k_cell_type, &py_none)?;
                         }
 
                         let val_obj = match cell.value {
@@ -216,44 +229,44 @@ impl SheetChunkIterator {
                             CellValue::DateTime(dt) => dt.into_py(py),
                             CellValue::Error(e) => e.into_py(py),
                         };
-                        cell_dict.set_item("value", &val_obj)?;
+                        cell_dict.set_item(k_value, &val_obj)?;
 
                         let is_formula_cell = cell.formula.is_some()
                             || cell.formula_type.is_some()
                             || cell.formula_si.is_some();
                         if let Some(f) = cell.formula {
-                            cell_dict.set_item("formula", f)?;
+                            cell_dict.set_item(k_formula, f)?;
                         } else {
-                            cell_dict.set_item("formula", py.None())?;
+                            cell_dict.set_item(k_formula, &py_none)?;
                         }
 
                         if is_formula_cell {
-                            cell_dict.set_item("cached_value", &val_obj)?;
+                            cell_dict.set_item(k_cached_value, &val_obj)?;
                         } else {
-                            cell_dict.set_item("cached_value", py.None())?;
+                            cell_dict.set_item(k_cached_value, &py_none)?;
                         }
 
                         if let Some(ft) = cell.formula_type {
-                            cell_dict.set_item("formula_type", ft)?;
+                            cell_dict.set_item(k_formula_type, ft)?;
                         } else {
-                            cell_dict.set_item("formula_type", py.None())?;
+                            cell_dict.set_item(k_formula_type, &py_none)?;
                         }
 
                         if let Some(fr) = cell.formula_ref {
-                            cell_dict.set_item("formula_ref", fr)?;
+                            cell_dict.set_item(k_formula_ref, fr)?;
                         } else {
-                            cell_dict.set_item("formula_ref", py.None())?;
+                            cell_dict.set_item(k_formula_ref, &py_none)?;
                         }
 
                         if let Some(si) = cell.formula_si {
-                            cell_dict.set_item("formula_si", si)?;
+                            cell_dict.set_item(k_formula_si, si)?;
                         } else {
-                            cell_dict.set_item("formula_si", py.None())?;
+                            cell_dict.set_item(k_formula_si, &py_none)?;
                         }
 
                         cells_list.append(cell_dict)?;
                     }
-                    row_dict.set_item("cells", cells_list)?;
+                    row_dict.set_item(k_cells, cells_list)?;
                     py_rows.append(row_dict)?;
                 }
                 Ok(Some(py_rows.into_py(py)))
@@ -417,12 +430,32 @@ pub fn py_validate_cell_string(s: &str) -> PyResult<()> {
     Ok(())
 }
 
+#[pyfunction]
+pub fn py_get_process_working_set_bytes() -> usize {
+    memory_guard::get_current_working_set_bytes()
+}
+
+#[pyfunction]
+pub fn py_check_memory_guard() -> PyResult<()> {
+    memory_guard::check_memory_guard()?;
+    Ok(())
+}
+
+#[pyfunction]
+pub fn py_scavenge_scratch_dir() -> PyResult<usize> {
+    let cleaned = scratch::scavenge_scratch_dir()?;
+    Ok(cleaned)
+}
+
 #[pymodule]
 fn _rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WorkbookStreamReader>()?;
     m.add_class::<SheetChunkIterator>()?;
     m.add_function(wrap_pyfunction!(py_parse_excel_serial, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_cell_string, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_process_working_set_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(py_check_memory_guard, m)?)?;
+    m.add_function(wrap_pyfunction!(py_scavenge_scratch_dir, m)?)?;
 
     m.add("ParserError", py.get_type_bound::<ParserError>())?;
     m.add(

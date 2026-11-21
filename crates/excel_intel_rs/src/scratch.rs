@@ -41,19 +41,7 @@ impl ScratchSpillFile {
             use std::os::windows::fs::OpenOptionsExt;
             use windows_sys::Win32::Storage::FileSystem::*;
 
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-                .open(&file_path)
-                .map_err(|e| {
-                    RustParserError::CorruptWorkbook(format!(
-                        "Failed to create scratch spill file: {}",
-                        e
-                    ))
-                })?;
-
+            // STEP 1: Lock-First Protocol — Create and acquire exclusive lock on .lock FIRST
             let lock_wide: Vec<u16> = lock_path
                 .to_str()
                 .unwrap()
@@ -73,48 +61,88 @@ impl ScratchSpillFile {
             };
 
             if lock_handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-                let _ = std::fs::remove_file(&file_path);
                 return Err(RustParserError::CorruptWorkbook(
                     "Failed to acquire scratch lock handle".to_string(),
                 ));
             }
 
             let locked = unsafe { LockFile(lock_handle, 0, 0, 1, 0) };
-
             if locked == 0 {
                 unsafe { windows_sys::Win32::Foundation::CloseHandle(lock_handle) };
-                let _ = std::fs::remove_file(&file_path);
                 let _ = std::fs::remove_file(&lock_path);
                 return Err(RustParserError::CorruptWorkbook(
                     "Failed to lock scratch lock file exclusively".to_string(),
                 ));
             }
 
+            // STEP 2: Create .bin spill file only after lock is actively held
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&file_path)
+                .map_err(|e| {
+                    unsafe { windows_sys::Win32::Foundation::CloseHandle(lock_handle) };
+                    let _ = std::fs::remove_file(&lock_path);
+                    RustParserError::CorruptWorkbook(format!(
+                        "Failed to create scratch spill file: {}",
+                        e
+                    ))
+                })?;
+
             (file, lock_handle)
         };
 
         #[cfg(not(windows))]
         let (file, lock_handle) = {
+            use std::os::unix::io::AsRawFd;
+
+            // POSIX Safety Protocol:
+            // 1. Create unpublished temp lock file
+            let tmp_lock_path = scratch_dir.join(format!("{}.tmp_lock", base_name));
+            let lock_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&tmp_lock_path)
+                .map_err(|e| {
+                    RustParserError::CorruptWorkbook(format!(
+                        "Failed to create temp lock file: {}",
+                        e
+                    ))
+                })?;
+
+            // 2. Acquire exclusive non-blocking flock
+            let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if ret != 0 {
+                let _ = std::fs::remove_file(&tmp_lock_path);
+                return Err(RustParserError::CorruptWorkbook(
+                    "Failed to acquire exclusive flock on temp lock".to_string(),
+                ));
+            }
+
+            // 3. Atomically publish locked file
+            std::fs::rename(&tmp_lock_path, &lock_path).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_lock_path);
+                RustParserError::CorruptWorkbook(format!("Failed to publish lock file: {}", e))
+            })?;
+
+            // 4. Create corresponding spill file only after publication
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create_new(true)
                 .open(&file_path)
                 .map_err(|e| {
+                    let _ = std::fs::remove_file(&lock_path);
                     RustParserError::CorruptWorkbook(format!(
                         "Failed to create scratch file: {}",
                         e
                     ))
                 })?;
-            let _lock_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-                .map_err(|e| {
-                    RustParserError::CorruptWorkbook(format!("Failed to create lock file: {}", e))
-                })?;
-            (file, ())
+
+            (file, lock_file)
         };
 
         Ok(Self {
@@ -126,6 +154,193 @@ impl ScratchSpillFile {
             cleaned: AtomicBool::new(false),
         })
     }
+}
+
+pub fn is_process_dead(pid: u32, expected_start_time: u64) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::*;
+        use windows_sys::Win32::System::Threading::*;
+
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                let err = GetLastError();
+                if err == ERROR_INVALID_PARAMETER {
+                    return true;
+                }
+                return false;
+            }
+
+            let mut creation_time: FILETIME = std::mem::zeroed();
+            let mut exit_time: FILETIME = std::mem::zeroed();
+            let mut kernel_time: FILETIME = std::mem::zeroed();
+            let mut user_time: FILETIME = std::mem::zeroed();
+
+            let ok = GetProcessTimes(
+                handle,
+                &mut creation_time,
+                &mut exit_time,
+                &mut kernel_time,
+                &mut user_time,
+            );
+            CloseHandle(handle);
+
+            if ok != 0 {
+                let actual_start_time = ((creation_time.dwHighDateTime as u64) << 32)
+                    | (creation_time.dwLowDateTime as u64);
+                if actual_start_time > expected_start_time {
+                    return true;
+                }
+                if actual_start_time == expected_start_time {
+                    return false;
+                }
+            }
+
+            false
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let stat_path = format!("/proc/{}/stat", pid);
+        if let Ok(content) = std::fs::read_to_string(&stat_path) {
+            if let Some(fields) = content.split_whitespace().nth(21) {
+                if let Ok(starttime) = fields.parse::<u64>() {
+                    if starttime > expected_start_time {
+                        return true;
+                    }
+                    if starttime == expected_start_time {
+                        return false;
+                    }
+                }
+            }
+            return false;
+        }
+
+        let res = unsafe { libc::kill(pid as i32, 0) };
+        res == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+}
+
+pub fn scavenge_scratch_dir() -> Result<usize, RustParserError> {
+    let scratch_dir = match get_or_create_scratch_dir() {
+        Ok(d) => d,
+        Err(_) => return Ok(0),
+    };
+
+    let entries = match std::fs::read_dir(&scratch_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(0),
+    };
+
+    let mut cleaned_count = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let filename = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        if !filename.starts_with("m02_spill_") {
+            continue;
+        }
+
+        if filename.ends_with(".tmp_lock") {
+            continue;
+        }
+
+        let parts: Vec<&str> = filename.split('_').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+
+        let pid: u32 = match parts[2].parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let start_time: u64 = match parts[3].parse() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        if filename.ends_with(".lock") {
+            #[cfg(windows)]
+            {
+                use windows_sys::Win32::Storage::FileSystem::*;
+                let lock_wide: Vec<u16> = path
+                    .to_str()
+                    .unwrap()
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+
+                let handle = unsafe {
+                    CreateFileW(
+                        lock_wide.as_ptr(),
+                        GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ,
+                        std::ptr::null_mut(),
+                        OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                        std::ptr::null_mut(),
+                    )
+                };
+
+                if handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+                    let locked = unsafe { LockFile(handle, 0, 0, 1, 0) };
+                    if locked != 0 {
+                        if is_process_dead(pid, start_time) {
+                            unsafe {
+                                windows_sys::Win32::Foundation::CloseHandle(handle);
+                            }
+                            let bin_path = path.with_extension("bin");
+                            let _ = std::fs::remove_file(&bin_path);
+                            let _ = std::fs::remove_file(&path);
+                            cleaned_count += 1;
+                        } else {
+                            unsafe {
+                                windows_sys::Win32::Foundation::CloseHandle(handle);
+                            }
+                        }
+                    } else {
+                        unsafe {
+                            windows_sys::Win32::Foundation::CloseHandle(handle);
+                        }
+                    }
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                use std::os::unix::io::AsRawFd;
+                if let Ok(lock_file) = OpenOptions::new().read(true).write(true).open(&path) {
+                    let ret = unsafe {
+                        libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+                    };
+                    if ret == 0 {
+                        if is_process_dead(pid, start_time) {
+                            let bin_path = path.with_extension("bin");
+                            let _ = std::fs::remove_file(&bin_path);
+                            let _ = std::fs::remove_file(&path);
+                            cleaned_count += 1;
+                        }
+                    }
+                }
+            }
+        } else if filename.ends_with(".bin") {
+            let lock_path = path.with_extension("lock");
+            if !lock_path.exists() && is_process_dead(pid, start_time) {
+                if let Ok(_f) = OpenOptions::new().write(true).open(&path) {
+                    let _ = std::fs::remove_file(&path);
+                    cleaned_count += 1;
+                }
+            }
+        }
+    }
+
+    Ok(cleaned_count)
 }
 
 impl Drop for ScratchSpillFile {
@@ -246,4 +461,35 @@ fn get_process_start_time() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scratch_spill_file_creation_and_cleanup() {
+        let scratch = ScratchSpillFile::new().unwrap();
+        let file_path = scratch.file_path.clone();
+        let lock_path = scratch.lock_path.clone();
+
+        assert!(file_path.exists());
+        assert!(lock_path.exists());
+
+        drop(scratch);
+
+        // Assert deterministic cleanup on drop
+        assert!(!file_path.exists());
+        assert!(!lock_path.exists());
+    }
+
+    #[test]
+    fn test_scavenger_preserves_active_files() {
+        let scratch = ScratchSpillFile::new().unwrap();
+        let cleaned = scavenge_scratch_dir().unwrap();
+        // Active scratch file must NOT be cleaned by scavenger
+        assert_eq!(cleaned, 0);
+        assert!(scratch.file_path.exists());
+        assert!(scratch.lock_path.exists());
+    }
 }

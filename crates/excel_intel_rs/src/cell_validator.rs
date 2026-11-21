@@ -15,6 +15,11 @@ pub fn validate_cell_string(decoded_utf8: &str) -> Result<(), RustParserError> {
         });
     }
 
+    // Fast-path: If byte length is <= 32,767, UTF-16 code units cannot exceed 32,767
+    if decoded_utf8.len() <= MAX_EXCEL_UTF16_UNITS {
+        return Ok(());
+    }
+
     // 2. Excel UTF-16 code unit specification ceiling
     let mut utf16_units: usize = 0;
     for c in decoded_utf8.chars() {

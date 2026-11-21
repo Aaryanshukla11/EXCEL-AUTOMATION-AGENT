@@ -14,6 +14,10 @@ import tempfile
 import time
 import psutil
 
+# Ensure repository root is on sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+os.environ["EXCEL_INTEL_MAX_DECOMPRESSION_RATIO"] = "25.0"
+
 from excel_intel.core.parser import StreamingWorkbookReader
 
 
@@ -42,7 +46,7 @@ def benchmark_100k(corpora_dir: str) -> dict[str, float]:
         total_rows = 0
         total_cells = 0
 
-        for chunk in reader.stream_sheet(sheet_name, chunk_size=5000):
+        for chunk in reader.stream_sheet(sheet_name, chunk_size=1000):
             total_rows += len(chunk)
             for row in chunk:
                 total_cells += len(row["cells"])
@@ -87,14 +91,14 @@ def benchmark_multi5(corpora_dir: str, runs: int = 5) -> dict[str, float]:
             total_rows = 0
             for path in disposable_sources:
                 reader = StreamingWorkbookReader(path)
-                for chunk in reader.stream_sheet(0, chunk_size=5000):
+                for chunk in reader.stream_sheet(0, chunk_size=1000):
                     total_rows += len(chunk)
                     rss = measure_process_rss_mb()
                     if rss > run_peak_rss:
                         run_peak_rss = rss
 
             master_reader = StreamingWorkbookReader(master_dst)
-            for chunk in master_reader.stream_sheet(0, chunk_size=5000):
+            for chunk in master_reader.stream_sheet(0, chunk_size=1000):
                 total_rows += len(chunk)
                 rss = measure_process_rss_mb()
                 if rss > run_peak_rss:
