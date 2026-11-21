@@ -28,7 +28,7 @@ pub struct LruSlot {
     pub key: u32,
     pub prev: Option<NonZeroU32>, // 1-based index (0x0 niche optimized)
     pub next: Option<NonZeroU32>, // 1-based index (0x0 niche optimized)
-    pub _padding: u32,
+    pub generation: u32,
     pub payload: Box<str>,
     pub disk_offset: u64,
 }
@@ -36,7 +36,7 @@ pub struct LruSlot {
 pub struct LruCache {
     slots: Vec<LruSlot>,
     free_head: Option<NonZeroU32>,
-    map: hashbrown::HashMap<u32, NonZeroU32>, // key -> 1-based slot index
+    map: hashbrown::HashMap<u32, (NonZeroU32, u32)>, // key -> (1-based slot index, generation)
     head: Option<NonZeroU32>,
     tail: Option<NonZeroU32>,
     current_payload_bytes: usize,
@@ -65,9 +65,12 @@ impl LruCache {
     }
 
     pub fn get(&mut self, key: u32) -> Option<&str> {
-        let &nz_idx = self.map.get(&key)?;
-        self.move_to_head(nz_idx);
+        let &(nz_idx, gen) = self.map.get(&key)?;
         let idx = Self::slot_idx(nz_idx);
+        if self.slots[idx].generation != gen || self.slots[idx].key != key {
+            return None;
+        }
+        self.move_to_head(nz_idx);
         Some(&self.slots[idx].payload)
     }
 
@@ -78,15 +81,17 @@ impl LruCache {
         }
 
         // If key already exists, update payload and promote
-        if let Some(&nz_idx) = self.map.get(&key) {
+        if let Some(&(nz_idx, gen)) = self.map.get(&key) {
             let idx = Self::slot_idx(nz_idx);
-            let old_len = self.slots[idx].payload.len();
-            self.current_payload_bytes =
-                self.current_payload_bytes.saturating_sub(old_len) + payload_len;
-            self.slots[idx].payload = s.into_boxed_str();
-            self.slots[idx].disk_offset = offset;
-            self.move_to_head(nz_idx);
-            return;
+            if self.slots[idx].generation == gen && self.slots[idx].key == key {
+                let old_len = self.slots[idx].payload.len();
+                self.current_payload_bytes =
+                    self.current_payload_bytes.saturating_sub(old_len) + payload_len;
+                self.slots[idx].payload = s.into_boxed_str();
+                self.slots[idx].disk_offset = offset;
+                self.move_to_head(nz_idx);
+                return;
+            }
         }
 
         // Evict until within text bytes limit and entry count limit
@@ -98,32 +103,35 @@ impl LruCache {
         }
 
         let boxed_str = s.into_boxed_str();
-        let nz_idx = if let Some(free_nz) = self.free_head {
+        let (nz_idx, gen) = if let Some(free_nz) = self.free_head {
             let free_i = Self::slot_idx(free_nz);
             self.free_head = self.slots[free_i].next;
+            let current_gen = self.slots[free_i].generation;
             self.slots[free_i] = LruSlot {
                 key,
                 prev: None,
-                next: self.head,
-                _padding: 0,
+                next: None,
+                generation: current_gen,
                 payload: boxed_str,
                 disk_offset: offset,
             };
-            free_nz
+            (free_nz, current_gen)
         } else {
             let new_i = self.slots.len();
             let nz = Self::to_nonzero(new_i);
             self.slots.push(LruSlot {
                 key,
                 prev: None,
-                next: self.head,
-                _padding: 0,
+                next: None,
+                generation: 1,
                 payload: boxed_str,
                 disk_offset: offset,
             });
-            nz
+            (nz, 1)
         };
 
+        // Attach as head
+        self.slots[Self::slot_idx(nz_idx)].next = self.head;
         if let Some(old_head) = self.head {
             self.slots[Self::slot_idx(old_head)].prev = Some(nz_idx);
         }
@@ -132,22 +140,43 @@ impl LruCache {
             self.tail = Some(nz_idx);
         }
 
-        self.map.insert(key, nz_idx);
+        self.map.insert(key, (nz_idx, gen));
         self.current_payload_bytes += payload_len;
     }
 
-    fn move_to_head(&mut self, nz_idx: NonZeroU32) {
-        if self.head == Some(nz_idx) {
-            return;
+    pub fn remove(&mut self, key: u32) -> Option<String> {
+        let &(nz_idx, gen) = self.map.get(&key)?;
+        let idx = Self::slot_idx(nz_idx);
+        if self.slots[idx].generation != gen || self.slots[idx].key != key {
+            return None;
         }
 
+        self.map.remove(&key);
+        let payload_len = self.slots[idx].payload.len();
+        self.current_payload_bytes = self.current_payload_bytes.saturating_sub(payload_len);
+
+        self.detach(nz_idx);
+
+        let old_payload =
+            std::mem::replace(&mut self.slots[idx].payload, String::new().into_boxed_str());
+        self.slots[idx].generation = self.slots[idx].generation.wrapping_add(1);
+        self.slots[idx].next = self.free_head;
+        self.free_head = Some(nz_idx);
+
+        Some(old_payload.into_string())
+    }
+
+    fn detach(&mut self, nz_idx: NonZeroU32) {
         let idx = Self::slot_idx(nz_idx);
         let prev_opt = self.slots[idx].prev;
         let next_opt = self.slots[idx].next;
 
         if let Some(prev) = prev_opt {
             self.slots[Self::slot_idx(prev)].next = next_opt;
+        } else {
+            self.head = next_opt;
         }
+
         if let Some(next) = next_opt {
             self.slots[Self::slot_idx(next)].prev = prev_opt;
         } else {
@@ -155,31 +184,42 @@ impl LruCache {
         }
 
         self.slots[idx].prev = None;
-        self.slots[idx].next = self.head;
+        self.slots[idx].next = None;
+    }
+
+    fn move_to_head(&mut self, nz_idx: NonZeroU32) {
+        if self.head == Some(nz_idx) {
+            return;
+        }
+
+        self.detach(nz_idx);
+
+        self.slots[Self::slot_idx(nz_idx)].next = self.head;
+        self.slots[Self::slot_idx(nz_idx)].prev = None;
 
         if let Some(old_head) = self.head {
             self.slots[Self::slot_idx(old_head)].prev = Some(nz_idx);
         }
         self.head = Some(nz_idx);
+
+        if self.tail.is_none() {
+            self.tail = Some(nz_idx);
+        }
     }
 
     fn evict_tail(&mut self) {
         if let Some(tail_nz) = self.tail {
             let tail_i = Self::slot_idx(tail_nz);
-            self.map.remove(&self.slots[tail_i].key);
-            self.current_payload_bytes = self
-                .current_payload_bytes
-                .saturating_sub(self.slots[tail_i].payload.len());
+            let key = self.slots[tail_i].key;
+            self.map.remove(&key);
+            let payload_len = self.slots[tail_i].payload.len();
+            self.current_payload_bytes = self.current_payload_bytes.saturating_sub(payload_len);
 
-            self.tail = self.slots[tail_i].prev;
-            if let Some(new_tail) = self.tail {
-                self.slots[Self::slot_idx(new_tail)].next = None;
-            } else {
-                self.head = None;
-            }
+            self.detach(tail_nz);
 
             // Free payload memory and place slot onto free list
             self.slots[tail_i].payload = String::new().into_boxed_str();
+            self.slots[tail_i].generation = self.slots[tail_i].generation.wrapping_add(1);
             self.slots[tail_i].next = self.free_head;
             self.free_head = Some(tail_nz);
         }
@@ -191,6 +231,99 @@ impl LruCache {
 
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    pub fn current_payload_bytes(&self) -> usize {
+        self.current_payload_bytes
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.slots.clear();
+        self.head = None;
+        self.tail = None;
+        self.free_head = None;
+        self.current_payload_bytes = 0;
+    }
+
+    #[cfg(test)]
+    pub fn check_invariants(&self) {
+        if self.map.is_empty() {
+            assert!(self.head.is_none(), "Empty cache head must be None");
+            assert!(self.tail.is_none(), "Empty cache tail must be None");
+            assert_eq!(
+                self.current_payload_bytes, 0,
+                "Empty cache payload bytes must be 0"
+            );
+            return;
+        }
+
+        assert!(self.head.is_some(), "Non-empty cache head must be Some");
+        assert!(self.tail.is_some(), "Non-empty cache tail must be Some");
+
+        // Forward traverse head -> tail
+        let mut forward_count = 0;
+        let mut curr = self.head;
+        let mut prev_seen = None;
+        let mut sum_bytes = 0;
+
+        while let Some(nz) = curr {
+            forward_count += 1;
+            let idx = Self::slot_idx(nz);
+            assert_eq!(
+                self.slots[idx].prev, prev_seen,
+                "Slot prev pointer mismatch at index {}",
+                idx
+            );
+            sum_bytes += self.slots[idx].payload.len();
+
+            let &(map_nz, gen) = self
+                .map
+                .get(&self.slots[idx].key)
+                .expect("Slot key must exist in lookup map");
+            assert_eq!(map_nz, nz, "Map index mismatch for slot");
+            assert_eq!(
+                gen, self.slots[idx].generation,
+                "Generation mismatch for slot"
+            );
+
+            prev_seen = Some(nz);
+            curr = self.slots[idx].next;
+        }
+
+        assert_eq!(prev_seen, self.tail, "Forward traversal must end at tail");
+        assert_eq!(
+            forward_count,
+            self.map.len(),
+            "Forward traversal count must match map.len()"
+        );
+        assert_eq!(
+            sum_bytes, self.current_payload_bytes,
+            "Sum of payloads must match current_payload_bytes"
+        );
+
+        // Backward traverse tail -> head
+        let mut backward_count = 0;
+        let mut bcurr = self.tail;
+        let mut next_seen = None;
+
+        while let Some(nz) = bcurr {
+            backward_count += 1;
+            let idx = Self::slot_idx(nz);
+            assert_eq!(
+                self.slots[idx].next, next_seen,
+                "Slot next pointer mismatch at index {}",
+                idx
+            );
+            next_seen = Some(nz);
+            bcurr = self.slots[idx].prev;
+        }
+
+        assert_eq!(next_seen, self.head, "Backward traversal must end at head");
+        assert_eq!(
+            backward_count, forward_count,
+            "Backward traversal count must match forward count"
+        );
     }
 }
 
@@ -387,12 +520,236 @@ mod tests {
     fn test_lru_slot_layout_size_is_40_bytes() {
         assert_eq!(std::mem::size_of::<LruSlot>(), 40);
         assert_eq!(std::mem::size_of::<Option<NonZeroU32>>(), 4);
+        assert_eq!(std::mem::size_of::<Box<str>>(), 16);
+        assert_eq!(std::mem::size_of::<u64>(), 8);
+    }
+
+    #[test]
+    fn test_empty_cache_behavior() {
+        let mut lru = LruCache::new();
+        assert!(lru.is_empty());
+        assert_eq!(lru.len(), 0);
+        assert_eq!(lru.current_payload_bytes(), 0);
+        assert_eq!(lru.get(42), None);
+        assert_eq!(lru.remove(42), None);
+        lru.check_invariants();
+    }
+
+    #[test]
+    fn test_single_entry_insertion_and_retrieval() {
+        let mut lru = LruCache::new();
+        lru.insert(1, 100, "hello".to_string());
+        assert!(!lru.is_empty());
+        assert_eq!(lru.len(), 1);
+        assert_eq!(lru.current_payload_bytes(), 5);
+        assert_eq!(lru.get(1), Some("hello"));
+        lru.check_invariants();
+
+        assert_eq!(lru.remove(1), Some("hello".to_string()));
+        assert!(lru.is_empty());
+        assert_eq!(lru.len(), 0);
+        assert_eq!(lru.current_payload_bytes(), 0);
+        lru.check_invariants();
+    }
+
+    #[test]
+    fn test_head_tail_middle_node_promotion() {
+        let mut lru = LruCache::new();
+        lru.insert(1, 10, "first".to_string());
+        lru.insert(2, 20, "second".to_string());
+        lru.insert(3, 30, "third".to_string());
+        lru.check_invariants();
+        // Head is 3, tail is 1. Order: 3 -> 2 -> 1
+
+        // 1. Promote head (key 3)
+        assert_eq!(lru.get(3), Some("third"));
+        lru.check_invariants();
+        assert_eq!(
+            lru.head.map(LruCache::slot_idx),
+            lru.map.get(&3).map(|&(nz, _)| LruCache::slot_idx(nz))
+        );
+
+        // 2. Promote tail (key 1)
+        assert_eq!(lru.get(1), Some("first"));
+        lru.check_invariants();
+        // Now head is 1, order: 1 -> 3 -> 2, tail is 2
+        assert_eq!(
+            lru.head.map(LruCache::slot_idx),
+            lru.map.get(&1).map(|&(nz, _)| LruCache::slot_idx(nz))
+        );
+        assert_eq!(
+            lru.tail.map(LruCache::slot_idx),
+            lru.map.get(&2).map(|&(nz, _)| LruCache::slot_idx(nz))
+        );
+
+        // 3. Promote middle (key 3)
+        assert_eq!(lru.get(3), Some("third"));
+        lru.check_invariants();
+        // Now head is 3, order: 3 -> 1 -> 2
+        assert_eq!(
+            lru.head.map(LruCache::slot_idx),
+            lru.map.get(&3).map(|&(nz, _)| LruCache::slot_idx(nz))
+        );
+    }
+
+    #[test]
+    fn test_rapid_eviction_with_100k_insertions() {
+        let mut lru = LruCache::new();
+        // Rapidly insert 100,000 distinct items
+        for i in 0..100_000 {
+            lru.insert(i, (i * 10) as u64, format!("str_{}", i));
+            if i % 10_000 == 0 {
+                lru.check_invariants();
+            }
+        }
+        lru.check_invariants();
+
+        // Must never exceed LRU_MAX_ENTRIES (50,000)
+        assert_eq!(lru.len(), LRU_MAX_ENTRIES);
+        assert!(lru.current_payload_bytes() <= LRU_MAX_TEXT_BYTES);
+
+        // Earliest keys (0..50,000) should have been evicted
+        assert!(lru.get(0).is_none());
+        assert!(lru.get(49_999).is_none());
+        // Latest keys (50,000..100,000) must be present
+        assert_eq!(lru.get(99_999), Some("str_99999"));
+        assert_eq!(lru.get(50_000), Some("str_50000"));
+        lru.check_invariants();
+    }
+
+    #[test]
+    fn test_repeated_insertion_and_removal() {
+        let mut lru = LruCache::new();
+        for round in 0usize..5 {
+            for i in 0..100 {
+                let key = (round * 100 + i) as u32;
+                lru.insert(key, key as u64, format!("val_{}", key));
+            }
+            lru.check_invariants();
+
+            for i in 0..50 {
+                let key = (round * 100 + i) as u32;
+                let removed = lru.remove(key);
+                assert_eq!(removed, Some(format!("val_{}", key)));
+            }
+            lru.check_invariants();
+            assert_eq!(lru.len(), (round + 1) * 50);
+        }
+        lru.check_invariants();
+        assert_eq!(lru.len(), 250);
+    }
+
+    #[test]
+    fn test_freelist_slot_reuse() {
+        let mut lru = LruCache::new();
+        // Insert 10 items
+        for i in 0..10 {
+            lru.insert(i, i as u64, format!("item_{}", i));
+        }
+        assert_eq!(lru.slots.len(), 10);
+        lru.check_invariants();
+
+        // Remove 5 items
+        for i in 0..5 {
+            assert!(lru.remove(i).is_some());
+        }
+        assert_eq!(lru.len(), 5);
+        lru.check_invariants();
+
+        // Insert 5 new items — must reuse slots from free list without growing arena
+        for i in 10..15 {
+            lru.insert(i, i as u64, format!("item_{}", i));
+        }
+        assert_eq!(lru.slots.len(), 10); // Arena capacity/len did NOT grow!
+        assert_eq!(lru.len(), 10);
+        lru.check_invariants();
+
+        // Verify all 10 items are accessible
+        for i in 5..15 {
+            assert_eq!(lru.get(i), Some(format!("item_{}", i)).as_deref());
+        }
+    }
+
+    #[test]
+    fn test_payload_byte_accounting() {
+        let mut lru = LruCache::new();
+        lru.insert(1, 0, "a".repeat(100));
+        assert_eq!(lru.current_payload_bytes(), 100);
+
+        lru.insert(2, 0, "b".repeat(250));
+        assert_eq!(lru.current_payload_bytes(), 350);
+
+        // Update key 1 with larger payload
+        lru.insert(1, 0, "a".repeat(150));
+        assert_eq!(lru.current_payload_bytes(), 400);
+
+        // Remove key 2
+        lru.remove(2);
+        assert_eq!(lru.current_payload_bytes(), 150);
+
+        lru.remove(1);
+        assert_eq!(lru.current_payload_bytes(), 0);
+        lru.check_invariants();
+    }
+
+    #[test]
+    fn test_16mib_payload_limit() {
+        let mut lru = LruCache::new();
+        let payload_size = 30 * 1024; // 30 KB strings (<= 32 KB threshold)
+        let sample = "x".repeat(payload_size);
+
+        // Insert until exceeding 16 MiB
+        let total_needed = (17 * 1024 * 1024) / payload_size;
+        for i in 0..total_needed {
+            lru.insert(i as u32, 0, sample.clone());
+        }
+
+        // Must strictly preserve LRU_MAX_TEXT_BYTES limit
+        assert!(lru.current_payload_bytes() <= LRU_MAX_TEXT_BYTES);
+        lru.check_invariants();
+    }
+
+    #[test]
+    fn test_50000_entry_limit() {
+        let mut lru = LruCache::new();
+        // Insert 60,000 tiny strings (total bytes << 16 MiB)
+        for i in 0..60_000 {
+            lru.insert(i, 0, "a".to_string());
+        }
+
+        assert_eq!(lru.len(), LRU_MAX_ENTRIES);
+        assert_eq!(lru.current_payload_bytes(), LRU_MAX_ENTRIES);
+        lru.check_invariants();
+
+        // First 10,000 items (0..10,000) must be evicted
+        for i in 0..10_000 {
+            assert!(lru.get(i).is_none());
+        }
+        // Last 50,000 items (10,000..60,000) must remain
+        for i in 10_000..60_000 {
+            assert_eq!(lru.get(i), Some("a"));
+        }
+    }
+
+    #[test]
+    fn test_cache_destruction_and_memory_cleanup() {
+        let mut lru = LruCache::new();
+        for i in 0..1000 {
+            lru.insert(i, 0, format!("text_{}", i));
+        }
+        assert_eq!(lru.len(), 1000);
+        assert!(lru.current_payload_bytes() > 0);
+
+        lru.clear();
+        assert_eq!(lru.len(), 0);
+        assert!(lru.is_empty());
+        assert_eq!(lru.current_payload_bytes(), 0);
+        lru.check_invariants();
     }
 
     #[test]
     fn test_lru_arena_rapid_eviction_and_reuse() {
         let mut lru = LruCache::new();
-        // Insert 100 strings of 100 bytes each
         for i in 0..100 {
             lru.insert(i, (i * 100) as u64, format!("value_{:090}", i));
         }
@@ -402,30 +759,29 @@ mod tests {
         assert!(lru.get(50).is_some());
         assert_eq!(
             lru.head.map(LruCache::slot_idx),
-            lru.map.get(&50).copied().map(LruCache::slot_idx)
+            lru.map
+                .get(&50)
+                .copied()
+                .map(|(nz, _)| LruCache::slot_idx(nz))
         );
     }
 
     #[test]
     fn test_shared_strings_tier1_to_tier2_spill_transition() {
         let mut table = SharedStringsTable::new();
-        // Populate up to spill threshold
         for i in 0..105_000 {
             let idx = table.push_string(&format!("str_{}", i)).unwrap();
             assert_eq!(idx, i as u32);
         }
 
         assert_eq!(table.len(), 105_000);
-        // Verify Tier 1 lookup (RAM)
         assert_eq!(table.get_string(10).unwrap(), "str_10");
-        // Verify Tier 2 lookup (Disk / LRU)
         assert_eq!(table.get_string(102_000).unwrap(), "str_102000");
     }
 
     #[test]
     fn test_shared_strings_ceiling_2m_rejection() {
         let mut table = SharedStringsTable::new();
-        // Manually simulate reaching 2,000,000 entries
         table
             .index_table
             .resize(MAX_SHARED_STRINGS_COUNT, StringEntry { offset: 0, len: 5 });
@@ -443,7 +799,6 @@ mod tests {
     #[test]
     fn test_concurrent_same_index_single_disk_read() {
         let mut table = SharedStringsTable::new();
-        // Force Tier 2 entry
         for i in 0..100_005 {
             table.push_string(&format!("item_{:05}", i)).unwrap();
         }
@@ -454,7 +809,6 @@ mod tests {
         let initial_disk_reads = table_arc.disk_read_count();
         let mut handles = Vec::new();
 
-        // Spawn 8 concurrent threads querying the exact same cold index
         for _ in 0..8 {
             let t = Arc::clone(&table_arc);
             handles.push(thread::spawn(move || {
@@ -468,7 +822,6 @@ mod tests {
         }
 
         let final_disk_reads = table_arc.disk_read_count();
-        // Crucial Double-Checked Locking Assertion: exactly 1 physical disk read executed across all 8 threads!
         assert_eq!(final_disk_reads - initial_disk_reads, 1);
     }
 }
