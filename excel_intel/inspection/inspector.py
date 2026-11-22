@@ -31,7 +31,9 @@ class WorkbookInspector:
     - ContentDistributionProfiler (single-pass bounded-memory cell & column profiling)
     - ContentAnomalyDetector (content anomalies and heuristic region inference)
 
-    Thread-safe and deterministic.
+    Designed to be stateless; each instance owns its reader and sub-inspectors.
+    Note: Concurrent safety across threads is architecturally intended via
+    statelessness, but comprehensive multi-threaded safety remains unverified.
     """
 
     def __init__(

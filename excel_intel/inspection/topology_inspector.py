@@ -8,6 +8,7 @@ Preserves exact 1-indexed source coordinates.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union
+import io
 import xml.etree.ElementTree as ET
 
 from excel_intel.core.parser import CorruptWorkbookError
@@ -127,36 +128,114 @@ class SheetTopologyInspector:
         if not sheet_xml:
             raise CorruptWorkbookError(f"Missing sheet XML part: {sheet_path}")
 
+        anomalies: list[StructuralAnomaly] = []
+        declared_dim_box: Optional[BoundingBox] = None
+        declared_dim_ref: Optional[str] = None
+        hidden_cols_raw: list[int] = []
+        hidden_rows_raw: list[int] = []
+        merge_cells: list[DeclaredMergeCell] = []
+        seen_boxes: list[BoundingBox] = []
+
         try:
-            root = ET.fromstring(sheet_xml)
+            f = io.StringIO(sheet_xml)
+            del sheet_xml  # Immediately release full XML string reference
+            context = ET.iterparse(f, events=("start", "end"))
+            root: Optional[ET.Element] = None
+
+            for event, elem in context:
+                tag = elem.tag.split("}")[-1]
+                if event == "start" and root is None:
+                    root = elem
+                elif event == "end":
+                    if tag == "dimension":
+                        declared_dim_ref = elem.attrib.get("ref")
+                        if declared_dim_ref:
+                            try:
+                                declared_dim_box = BoundingBox.from_a1_ref(declared_dim_ref)
+                            except ValueError as e:
+                                anomalies.append(
+                                    StructuralAnomaly(
+                                        anomaly_id=f"anom_dim_{sheet_name}",
+                                        severity=AnomalySeverity.WARNING,
+                                        code="ANOM_INVALID_DIMENSION_REF",
+                                        message=f"Invalid dimension reference '{declared_dim_ref}': {e}",
+                                    )
+                                )
+                        elem.clear()
+                        if root is not None:
+                            root.clear()
+                    elif tag == "col":
+                        is_hidden = elem.attrib.get("hidden", "").lower() in ("true", "1")
+                        if is_hidden:
+                            try:
+                                c_min = int(elem.attrib.get("min", "0"))
+                                c_max = int(elem.attrib.get("max", "0"))
+                                if 1 <= c_min <= c_max <= 16384:
+                                    hidden_cols_raw.extend(range(c_min, c_max + 1))
+                            except ValueError:
+                                pass
+                        elem.clear()
+                    elif tag == "row":
+                        is_hidden = elem.attrib.get("hidden", "").lower() in ("true", "1")
+                        if is_hidden:
+                            try:
+                                r_idx = int(elem.attrib.get("r", "0"))
+                                if 1 <= r_idx <= 1048576:
+                                    hidden_rows_raw.append(r_idx)
+                            except ValueError:
+                                pass
+                        elem.clear()
+                        if root is not None:
+                            root.clear()
+                    elif tag == "c":
+                        elem.clear()
+                    elif tag == "mergeCell":
+                        if len(merge_cells) < MAX_MERGE_CELLS_PER_SHEET:
+                            m_ref = elem.attrib.get("ref", "")
+                            if m_ref:
+                                try:
+                                    m_cell = DeclaredMergeCell.from_ref(m_ref)
+                                    for prev_box in seen_boxes:
+                                        if m_cell.box.intersects(prev_box):
+                                            anomalies.append(
+                                                StructuralAnomaly(
+                                                    anomaly_id=f"anom_overlapping_merge_{m_ref}",
+                                                    severity=AnomalySeverity.WARNING,
+                                                    code="ANOM_OVERLAPPING_MERGE_CELLS",
+                                                    message=f"Merge range '{m_ref}' overlaps with '{prev_box.to_a1_ref()}'",
+                                                    box=m_cell.box,
+                                                )
+                                            )
+                                            break
+                                    seen_boxes.append(m_cell.box)
+                                    merge_cells.append(m_cell)
+                                except ValueError as e:
+                                    anomalies.append(
+                                        StructuralAnomaly(
+                                            anomaly_id=f"anom_invalid_merge_{m_ref}",
+                                            severity=AnomalySeverity.WARNING,
+                                            code="ANOM_INVALID_MERGE_REF",
+                                            message=f"Invalid mergeCell ref '{m_ref}': {e}",
+                                        )
+                                    )
+                        elif len(merge_cells) == MAX_MERGE_CELLS_PER_SHEET:
+                            anomalies.append(
+                                StructuralAnomaly(
+                                    anomaly_id=f"anom_merge_cap_{sheet_name}",
+                                    severity=AnomalySeverity.WARNING,
+                                    code="ANOM_MERGE_CELL_LIMIT_REACHED",
+                                    message=f"Merged cells capped at {MAX_MERGE_CELLS_PER_SHEET}",
+                                )
+                            )
+                        elem.clear()
+                    elif tag in ("cols", "mergeCells", "sheetData", "worksheet"):
+                        elem.clear()
+                        if root is not None:
+                            root.clear()
         except ET.ParseError as e:
             raise CorruptWorkbookError(
                 f"Malformed worksheet XML in '{sheet_path}': {e}"
             ) from e
-
-        anomalies: list[StructuralAnomaly] = []
-
-        # 1. Dimension element: <dimension ref="A1:Z500"/>
-        declared_dim_box: Optional[BoundingBox] = None
-        declared_dim_ref: Optional[str] = None
-        dim_elem = root.find(f"{{{_NS_MAIN}}}dimension")
-        if dim_elem is None:
-            dim_elem = root.find("dimension")
-
-        if dim_elem is not None:
-            declared_dim_ref = dim_elem.attrib.get("ref")
-            if declared_dim_ref:
-                try:
-                    declared_dim_box = BoundingBox.from_a1_ref(declared_dim_ref)
-                except ValueError as e:
-                    anomalies.append(
-                        StructuralAnomaly(
-                            anomaly_id=f"anom_dim_{sheet_name}",
-                            severity=AnomalySeverity.WARNING,
-                            code="ANOM_INVALID_DIMENSION_REF",
-                            message=f"Invalid dimension reference '{declared_dim_ref}': {e}",
-                        )
-                    )
 
         # Update properties with dimension facts
         sheet_props = DeclaredSheetProperties(
@@ -168,101 +247,8 @@ class SheetTopologyInspector:
             tab_color_rgb=sheet_props.tab_color_rgb,
         )
 
-        # 2. Hidden Columns from <cols><col min="X" max="Y" hidden="1"/></cols>
-        hidden_cols_raw: list[int] = []
-        cols_elem = root.find(f"{{{_NS_MAIN}}}cols")
-        if cols_elem is None:
-            cols_elem = root.find("cols")
-        if cols_elem is not None:
-            for col_elem in cols_elem:
-                is_hidden = col_elem.attrib.get("hidden", "").lower() in (
-                    "true",
-                    "1",
-                )
-                if is_hidden:
-                    try:
-                        c_min = int(col_elem.attrib.get("min", "0"))
-                        c_max = int(col_elem.attrib.get("max", "0"))
-                        if 1 <= c_min <= c_max <= 16384:
-                            hidden_cols_raw.extend(range(c_min, c_max + 1))
-                    except ValueError:
-                        pass
-
         hidden_columns = consolidate_intervals(hidden_cols_raw, dimension="col")
-
-        # 3. Hidden Rows from <sheetData><row r="X" hidden="1"/></sheetData>
-        hidden_rows_raw: list[int] = []
-        sheet_data = root.find(f"{{{_NS_MAIN}}}sheetData")
-        if sheet_data is None:
-            sheet_data = root.find("sheetData")
-        if sheet_data is not None:
-            for row_elem in sheet_data:
-                is_hidden = row_elem.attrib.get("hidden", "").lower() in (
-                    "true",
-                    "1",
-                )
-                if is_hidden:
-                    try:
-                        r_idx = int(row_elem.attrib.get("r", "0"))
-                        if 1 <= r_idx <= 1048576:
-                            hidden_rows_raw.append(r_idx)
-                    except ValueError:
-                        pass
-
         hidden_rows = consolidate_intervals(hidden_rows_raw, dimension="row")
-
-        # 4. Merged Cells from <mergeCells><mergeCell ref="A1:B2"/></mergeCells>
-        merge_cells: list[DeclaredMergeCell] = []
-        merge_cells_elem = root.find(f"{{{_NS_MAIN}}}mergeCells")
-        if merge_cells_elem is None:
-            merge_cells_elem = root.find("mergeCells")
-        if merge_cells_elem is not None:
-            seen_boxes: list[BoundingBox] = []
-            for m_elem in merge_cells_elem:
-                if len(merge_cells) >= MAX_MERGE_CELLS_PER_SHEET:
-                    anomalies.append(
-                        StructuralAnomaly(
-                            anomaly_id=f"anom_merge_cap_{sheet_name}",
-                            severity=AnomalySeverity.WARNING,
-                            code="ANOM_MERGE_CELL_LIMIT_REACHED",
-                            message=f"Merged cells capped at {MAX_MERGE_CELLS_PER_SHEET}",
-                        )
-                    )
-                    break
-
-                m_ref = m_elem.attrib.get("ref", "")
-                if not m_ref:
-                    continue
-
-                try:
-                    m_cell = DeclaredMergeCell.from_ref(m_ref)
-                except ValueError as e:
-                    anomalies.append(
-                        StructuralAnomaly(
-                            anomaly_id=f"anom_invalid_merge_{m_ref}",
-                            severity=AnomalySeverity.WARNING,
-                            code="ANOM_INVALID_MERGE_REF",
-                            message=f"Invalid mergeCell ref '{m_ref}': {e}",
-                        )
-                    )
-                    continue
-
-                # Overlap check against previously seen merge ranges
-                for prev_box in seen_boxes:
-                    if m_cell.box.intersects(prev_box):
-                        anomalies.append(
-                            StructuralAnomaly(
-                                anomaly_id=f"anom_overlapping_merge_{m_ref}",
-                                severity=AnomalySeverity.WARNING,
-                                code="ANOM_OVERLAPPING_MERGE_CELLS",
-                                message=f"Merge range '{m_ref}' overlaps with '{prev_box.to_a1_ref()}'",
-                                box=m_cell.box,
-                            )
-                        )
-                        break
-
-                seen_boxes.append(m_cell.box)
-                merge_cells.append(m_cell)
 
         # 5. Tables associated with this sheet
         tables, table_anomalies = self._package_inspector.inspect_tables_for_sheet(

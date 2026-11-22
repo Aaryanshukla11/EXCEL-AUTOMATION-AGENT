@@ -65,7 +65,7 @@ Extended immutable Pydantic v2 schemas:
   - `WorkbookInspector.inspect(target)`: Classmethod for one-line self-closing inspection.
   - Context manager (`__enter__` / `__exit__`) for deterministic native resource cleanup.
 - **Immutability Invariant:** Inspection operations are strictly read-only. File SHA-256 hashes before and after inspection are identical.
-- **Thread Safety:** Stateless facade with no mutable global state; safe for concurrent execution across worker threads.
+- **Concurrency Posture:** Stateless facade architecture; each instance owns its reader and sub-inspectors. Note: Concurrent execution was exercised via a basic smoke test, but comprehensive multi-workbook concurrent isolation remains formally unverified.
 
 ---
 
