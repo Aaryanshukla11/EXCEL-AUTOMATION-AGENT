@@ -63,3 +63,24 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Intermediate review packages, audit reports, and scratch files
+/v2_review_package/
+/V2_ARCHITECTURE_REVIEW_PACKAGE.zip
+/V2_ARCHITECTURE_CORRECTION_REPORT.md
+/V2_FINAL_CORRECTION_REPORT.md
+/V2_FINAL_REPAIR_REPORT.md
+/V2_FINAL_VERIFICATION_REPORT.md
+/docs/v2_proposals/
+/m04_benchmark_results.json
+
+# Root-level duplicate / scratch milestone markdown reports
+/M03_FINAL_INTEGRATION_AND_ACCEPTANCE_REPORT.md
+/M03_FINAL_VERIFICATION_AND_CLOSURE_REPORT.md
+/M03_MEMORY_REGRESSION_AND_REMEDIATION_REPORT.md
+/M03_PROMPT_3_ACCEPTANCE_AUDIT.md
+/M04_*.md
+/M05_FINAL_CLOSURE_REPORT.md
+/M05_PROMPT_2_EVIDENCE_REPORT.md
+/M05_PROMPT_4_EVIDENCE_REPORT.md
+/M05_SEMANTIC_ANALYSIS_*.md
