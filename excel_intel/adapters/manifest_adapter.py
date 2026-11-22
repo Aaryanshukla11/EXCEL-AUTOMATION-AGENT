@@ -1,4 +1,4 @@
-"""Canonical DiscoveryManifest Synthesis Facade for M05 (FR-6).
+"""Canonical DiscoveryManifest Synthesis Adapter for M05 (FR-6).
 
 Synthesizes the root M01 DiscoveryManifest by losslessly combining verified semantic
 type profiles from M05 Prompt 2, detected spatial table boundaries from M04, and
@@ -26,7 +26,7 @@ def build_discovery_manifest(
     formula_graph_report: FormulaGraphReport,
     manifest_id: Optional[uuid.UUID] = None,
 ) -> DiscoveryManifest:
-    """Assemble root canonical M01 DiscoveryManifest.
+    """Assemble root canonical M01 DiscoveryManifest via downstream integration adapter.
 
     Args:
         workbook_path: Absolute or canonical path of the inspected spreadsheet.
@@ -34,7 +34,7 @@ def build_discovery_manifest(
         file_size_bytes: Size of the spreadsheet file in bytes.
         detection_report: Spatial table detection report from M04.
         region_type_reports: Dictionary mapping region_id to M05 RegionTypeReport.
-        formula_graph_report: Formula calculation graph report from M05.
+        formula_graph_report: Formula calculation graph report from M05 Prompt 4.
         manifest_id: Optional UUID identifier; generated if omitted.
 
     Returns:

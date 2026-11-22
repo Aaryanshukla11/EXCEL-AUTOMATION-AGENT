@@ -9,7 +9,7 @@ import pytest
 
 from excel_intel.core.types import ColumnType, DiscoveryManifest
 from excel_intel.formulas.graph import CycleStatus, FormulaGraphReport
-from excel_intel.formulas.manifest import build_discovery_manifest
+from excel_intel.adapters.manifest_adapter import build_discovery_manifest
 from excel_intel.spatial.models import (
     BoundingBox as SpatialBoundingBox,
     HeaderResolutionReport,

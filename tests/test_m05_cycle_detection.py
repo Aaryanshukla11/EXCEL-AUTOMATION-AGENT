@@ -122,3 +122,34 @@ def test_incomplete_graph_with_confirmed_cycles() -> None:
     assert report.is_complete is False
     assert report.has_cycles is True
     assert report.cycle_status == CycleStatus.CYCLES_DETECTED
+
+
+def test_iterative_tarjan_deep_chain_acyclic() -> None:
+    """Verify iterative Tarjan SCC handles deep graph (>1000 nodes) without RecursionError."""
+    # Acyclic chain of 1,500 nodes: N0 -> N1 -> ... -> N1499
+    depth = 1500
+    adj: dict[str, set[str]] = {}
+    for i in range(depth - 1):
+        adj[f"N{i}"] = {f"N{i + 1}"}
+
+    detector = CycleDetector(adj)
+    cycles = detector.find_cycles()
+    assert len(cycles) == 0
+
+
+def test_iterative_tarjan_deep_chain_cycle() -> None:
+    """Verify iterative Tarjan SCC handles deep cycle (>1000 nodes) and reconstructs path."""
+    # Circular chain of 1,500 nodes: N0 -> N1 -> ... -> N1499 -> N0
+    depth = 1500
+    adj: dict[str, set[str]] = {}
+    for i in range(depth - 1):
+        adj[f"N{i}"] = {f"N{i + 1}"}
+    adj[f"N{depth - 1}"] = {"N0"}
+
+    detector = CycleDetector(adj)
+    cycles = detector.find_cycles()
+    assert len(cycles) == 1
+    cycle = cycles[0]
+    assert cycle[0] == cycle[-1]
+    assert len(cycle) == depth + 1
+
