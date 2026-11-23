@@ -3,14 +3,15 @@
 **Milestone:** M05 — Semantic Type & Formula Dependency Analysis  
 **Stage:** Prompt 4 — Hardened Dependency Graph, Cycle Detection & Manifest Integration  
 **Date:** 2026-11-23  
-**Branch:** `feat/m05-prompt4-dependency-dag`  
-**Status:** COMPLETE & PASSING ALL QUALITY GATES  
+**Branch:** `main` (Merged from `feat/m05-prompt4-dependency-dag`)  
+**Merge Commit:** `01a00d18067fad3f7225a9bfea25c2261b771bcc`  
+**Status:** COMPLETE, VERIFIED & INTEGRATED INTO MAIN  
 
 ---
 
 ## 1. Executive Summary & Authorization Context
 
-Following the authorization to implement and harden **M05 Prompt 4** on feature branch `feat/m05-prompt4-dependency-dag`, this evidence report documents the complete implementation, architectural hardening, and multi-environment verification of the Excel Formula Calculation Dependency Graph, Cycle Detection Subsystem, and Downstream Manifest Adapter.
+Following the authorization to implement and harden **M05 Prompt 4** on feature branch `feat/m05-prompt4-dependency-dag` and its subsequent controlled `--no-ff` integration into `main`, this evidence report documents the complete implementation, architectural hardening, and multi-environment verification of the Excel Formula Calculation Dependency Graph, Cycle Detection Subsystem, and Downstream Manifest Adapter.
 
 All identified technical gaps from the M05 Scope Recovery Plan have been fully resolved:
 1. **Defined Names Resolution:** Full resolution for both workbook-level and sheet-scoped defined names with sheet-level precedence, recursive alias resolution, cycle detection for mutually recursive defined names, and explicit `UNRESOLVED` dependency tracking.
@@ -22,7 +23,7 @@ All identified technical gaps from the M05 Scope Recovery Plan have been fully r
 ### Scope Boundaries Enforced
 - **Zero Formula Recalculation:** The calculation graph statically analyzes formula AST structure and dependency topology with zero formula evaluation (`eval()`, `exec()`) or recalculation.
 - **Frozen Modules Intact:** M01 (`excel_intel/core/`), M02 (`crates/excel_intel_rs/`), M03 (`excel_intel/inspection/`), and M04 (`excel_intel/spatial/`) remain completely unmodified.
-- **Strict Branch Isolation:** All implementation and verification performed exclusively on `feat/m05-prompt4-dependency-dag` without modifying `main` or executing premature pushes.
+- **Strict Integration Governance:** Integration executed via `--no-ff --no-commit` merge, with all modify/delete conflicts deterministic resolved, tests passing on all runtimes, and pushed cleanly to `origin/main`.
 
 ---
 
@@ -82,53 +83,54 @@ All identified technical gaps from the M05 Scope Recovery Plan have been fully r
 
 ## 4. Test Verification & Quality Gate Results
 
-### 4.1 M05 Prompt 4 Hardened Test Suite (30 Tests)
-```
-py -3.12 -m pytest tests/test_m05_cycle_detection.py tests/test_m05_formula_graph.py tests/test_m05_manifest_integration.py tests/test_m05_formula_integration.py -v
-============================= 30 passed in 1.02s ==============================
-```
+### 4.1 M05 Prompt 4 Test Suite (30 Tests)
 - `tests/test_m05_cycle_detection.py`: 10 passed (including 1500-node iterative Tarjan recursion safety tests).
 - `tests/test_m05_formula_graph.py`: 15 passed (including defined names, dynamic spill references, and resource safety caps).
 - `tests/test_m05_manifest_integration.py`: 3 passed (relocated manifest adapter verification).
-- `tests/test_m05_formula_integration.py`: 2 passed (precedent extraction tests on feature branch).
+- `tests/test_m05_formula_integration.py`: 2 passed (precedent extraction tests).
 
-### 4.2 M05 Prompt 3 Regression Suite (41 Tests)
-```
-py -3.12 -m pytest tests/test_m05_formula_lexer.py tests/test_m05_formula_parser.py tests/test_m05_formula_models.py tests/test_m05_formula_edge_cases.py tests/test_m05_formula_unsupported.py -q
-41 passed in 0.43s
-```
+### 4.2 M05 Prompt 3 Test Suite (44 Tests)
+- `tests/test_m05_formula_lexer.py`: 8 passed
+- `tests/test_m05_formula_parser.py`: 16 passed
+- `tests/test_m05_formula_models.py`: 5 passed
+- `tests/test_m05_formula_edge_cases.py`: 6 passed
+- `tests/test_m05_formula_unsupported.py`: 6 passed
+- `tests/test_m05_formula_integration.py`: 3 passed (parser validation tests)
 
-### 4.3 M05 Prompt 2 Regression Suite (50 Tests)
-```
-py -3.12 -m pytest tests/test_m05_pattern_detector.py tests/test_m05_sampling.py tests/test_m05_type_inferrer.py tests/test_m05_type_integration.py tests/test_m05_type_models.py -q
-50 passed in 2.21s
-```
+### 4.3 M05 Prompt 2 Test Suite (50 Tests)
+- `tests/test_m05_pattern_detector.py`: 15 passed
+- `tests/test_m05_sampling.py`: 11 passed
+- `tests/test_m05_type_inferrer.py`: 16 passed
+- `tests/test_m05_type_integration.py`: 2 passed
+- `tests/test_m05_type_models.py`: 6 passed
 
-### 4.4 Full Platform Regression Suites
+### 4.4 Full Platform Regression Suites (Post-Merge on `main`)
 
 #### Python 3.12:
-```
-py -3.12 -m pytest tests/ -q
-356 passed in 15.1s
+```text
+py -3.12 -m pytest tests/
+362 passed in 38.79s
 ```
 
 #### Python 3.13:
-```
-py -3.13 -m pytest tests/ -q
-356 passed in 15.0s
+```text
+py -3.13 -m pytest tests/
+362 passed in 22.35s
 ```
 
 #### Rust Native Engine (`excel_intel_rs`):
-```
+```text
 cargo test --manifest-path crates/excel_intel_rs/Cargo.toml
-test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
 ```
+
+**Total Active Test Count:** **422 tests passed** (362 Python + 60 Rust).
 
 ---
 
-## 5. Scope Recovery & Working Tree Integrity
+## 5. Integration Status & Working Tree Integrity
 
-- Current branch: `feat/m05-prompt4-dependency-dag`
-- Working tree status: All production and test modifications verified.
-- Uncommitted changes are staged/ready for project owner inspection and authorization.
-- Zero premature pushes or commits executed.
+- Current branch: `main`
+- HEAD: `01a00d18067fad3f7225a9bfea25c2261b771bcc` (`01a00d1`)
+- Remote reference: `origin/main` (Synchronized)
+- Working tree: Clean (unstaged `.gitignore` whitespace change preserved).

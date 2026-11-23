@@ -41,11 +41,16 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Temporary and transaction artifacts
+# Database, storage and temporary artifacts
 *.tmp
 *.bak
 *.wal
 *.rec.tmp
+*.db
+*.sqlite
+*.sqlite3
+storage/
+*_storage/
 storage_sim/
 excel_intel_scratch/
 
@@ -64,6 +69,10 @@ desktop.ini
 *.swp
 *.swo
 
+# Frontend dependencies and builds
+frontend/node_modules/
+frontend/dist/
+
 # Intermediate review packages, audit reports, and scratch files
 /v2_review_package/
 /V2_ARCHITECTURE_REVIEW_PACKAGE.zip
@@ -73,6 +82,7 @@ desktop.ini
 /m04_benchmark_results.json
 
 # Root-level duplicate / scratch milestone markdown reports
+/M02_*.md
 /M03_*.md
 /M04_*.md
 /M05_*.md
