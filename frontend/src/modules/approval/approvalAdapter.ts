@@ -3,94 +3,99 @@ import type {
   DecisionSubmitPayload,
   RevisionSubmitPayload,
 } from "./approvalTypes";
-import {
-  approveRequest,
-  rejectRequest,
-  requestRevision,
-  reviseRequest,
-} from "./approvalStateMachine";
-import { apiClient } from "../../api/client";
-import { MOCK_APPROVAL_REQUESTS } from "../../mocks/fixtures";
+import { apiClient, ApiError } from "../../api/client";
 
 export interface ApprovalAdapter {
   getRequests(): Promise<readonly ApprovalRequest[]>;
   getRequestById(requestId: string): Promise<ApprovalRequest | null>;
   submitDecision(payload: DecisionSubmitPayload & { requestId: string }): Promise<ApprovalRequest>;
-  reviseRequest(payload: RevisionSubmitPayload & { requestId: string }): Promise<ApprovalRequest>;
+  reviseRequest(payload: RevisionSubmitPayload & { requestId: string; target_version?: number }): Promise<ApprovalRequest>;
+  cancelRequest(payload: { requestId: string; target_version: number; rationale?: string }): Promise<ApprovalRequest>;
+  submitForReview(payload: { requestId: string; target_version: number }): Promise<ApprovalRequest>;
 }
 
 /**
- * Mock Approval Adapter.
- * Clearly marked as a frontend-only simulation; does not claim server-side authorization.
+ * Production HTTP Approval Adapter.
+ * Integrates directly with the authenticated B6 FastAPI backend endpoints (/api/v1/approvals).
+ * Propagates real HTTP status errors (401, 403, 404, 409, 410) without mock fallbacks.
  */
-class MockApprovalAdapter implements ApprovalAdapter {
-  private requests: ApprovalRequest[] = [...MOCK_APPROVAL_REQUESTS];
-
+export class HttpApprovalAdapter implements ApprovalAdapter {
   async getRequests(): Promise<readonly ApprovalRequest[]> {
-    try {
-      const res = await apiClient<ApprovalRequest[]>("/api/v1/approvals");
-      return res;
-    } catch {
-      // Fallback to memory fixtures
-      return this.requests;
-    }
+    return await apiClient<ApprovalRequest[]>("/api/v1/approvals");
   }
 
   async getRequestById(requestId: string): Promise<ApprovalRequest | null> {
-    const found = this.requests.find((r) => r.request_id === requestId);
-    return found || null;
+    try {
+      return await apiClient<ApprovalRequest>(`/api/v1/approvals/${encodeURIComponent(requestId)}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   async submitDecision(
     payload: DecisionSubmitPayload & { requestId: string }
   ): Promise<ApprovalRequest> {
-    const target = this.requests.find((r) => r.request_id === payload.requestId);
-    if (!target) {
-      throw new Error(`Approval request with ID '${payload.requestId}' was not found.`);
-    }
-
-    let updated: ApprovalRequest;
-    if (payload.decision === "APPROVED") {
-      updated = approveRequest(target, {
-        reviewer_identity: payload.reviewer_identity,
-        rationale: payload.rationale,
-        target_version: payload.target_version,
-      });
-    } else if (payload.decision === "REJECTED") {
-      updated = rejectRequest(target, {
-        reviewer_identity: payload.reviewer_identity,
-        rationale: payload.rationale || "",
-        target_version: payload.target_version,
-      });
-    } else {
-      updated = requestRevision(target, {
-        reviewer_identity: payload.reviewer_identity,
-        rationale: payload.rationale || "",
-        target_version: payload.target_version,
-      });
-    }
-
-    this.requests = this.requests.map((r) => (r.request_id === updated.request_id ? updated : r));
-    return updated;
+    return await apiClient<ApprovalRequest>(
+      `/api/v1/approvals/${encodeURIComponent(payload.requestId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          decision: payload.decision,
+          target_version: payload.target_version,
+          rationale: payload.rationale || undefined,
+        }),
+      }
+    );
   }
 
   async reviseRequest(
-    payload: RevisionSubmitPayload & { requestId: string }
+    payload: RevisionSubmitPayload & { requestId: string; target_version?: number }
   ): Promise<ApprovalRequest> {
-    const target = this.requests.find((r) => r.request_id === payload.requestId);
-    if (!target) {
-      throw new Error(`Approval request with ID '${payload.requestId}' was not found.`);
-    }
+    return await apiClient<ApprovalRequest>(
+      `/api/v1/approvals/${encodeURIComponent(payload.requestId)}/resubmit`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: payload.target_version ?? 1,
+          revised_operations: payload.operations,
+          revision_note: payload.revision_note,
+        }),
+      }
+    );
+  }
 
-    const updated = reviseRequest(target, {
-      operations: payload.operations,
-      author: payload.author,
-      revision_note: payload.revision_note,
-    });
+  async cancelRequest(
+    payload: { requestId: string; target_version: number; rationale?: string }
+  ): Promise<ApprovalRequest> {
+    return await apiClient<ApprovalRequest>(
+      `/api/v1/approvals/${encodeURIComponent(payload.requestId)}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: payload.target_version,
+          rationale: payload.rationale,
+        }),
+      }
+    );
+  }
 
-    this.requests = this.requests.map((r) => (r.request_id === updated.request_id ? updated : r));
-    return updated;
+  async submitForReview(
+    payload: { requestId: string; target_version: number }
+  ): Promise<ApprovalRequest> {
+    return await apiClient<ApprovalRequest>(
+      `/api/v1/approvals/${encodeURIComponent(payload.requestId)}/submit`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: payload.target_version,
+        }),
+      }
+    );
   }
 }
 
-export const approvalAdapter: ApprovalAdapter = new MockApprovalAdapter();
+export const approvalAdapter: ApprovalAdapter = new HttpApprovalAdapter();
+

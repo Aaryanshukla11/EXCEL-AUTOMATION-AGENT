@@ -84,6 +84,87 @@ export const handlers = [
     return HttpResponse.json(found);
   }),
 
+  // POST /api/v1/approvals/:id/decision
+  http.post("/api/v1/approvals/:id/decision", async ({ params, request }) => {
+    const body = (await request.json()) as any;
+    const found = MOCK_APPROVAL_REQUESTS.find((r) => r.request_id === params.id);
+    if (!found) {
+      return new HttpResponse(null, { status: 404 });
+    }
+    const updated = {
+      ...found,
+      state: body.decision,
+      version: found.version + 1,
+      decision: {
+        decision: body.decision,
+        decided_at: new Date().toISOString(),
+        reviewer_identity: "mock_approver",
+        reviewer_role: "APPROVER",
+        rationale: body.rationale || null,
+        version_decided: found.version,
+      },
+      decision_history: [
+        ...found.decision_history,
+        {
+          event_id: `evt_${Date.now()}`,
+          event_type: body.decision === "APPROVED" ? "APPROVED" : body.decision === "REJECTED" ? "REJECTED" : "REVISION_REQUESTED",
+          timestamp: new Date().toISOString(),
+          actor: "mock_approver",
+          details: body.rationale || `Decision recorded: ${body.decision}`,
+          version: found.version + 1,
+        },
+      ],
+    };
+    return HttpResponse.json(updated, {
+      headers: {
+        "X-Approval-Token": "mock_token_jwt_token_string",
+      },
+    });
+  }),
+
+  // POST /api/v1/approvals/:id/submit
+  http.post("/api/v1/approvals/:id/submit", async ({ params }) => {
+    const found = MOCK_APPROVAL_REQUESTS.find((r) => r.request_id === params.id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    const updated = { ...found, state: "PENDING_REVIEW", version: found.version + 1 };
+    return HttpResponse.json(updated);
+  }),
+
+  // POST /api/v1/approvals/:id/cancel
+  http.post("/api/v1/approvals/:id/cancel", async ({ params }) => {
+    const found = MOCK_APPROVAL_REQUESTS.find((r) => r.request_id === params.id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    const updated = { ...found, state: "CANCELLED", version: found.version + 1 };
+    return HttpResponse.json(updated);
+  }),
+
+  // POST /api/v1/approvals/:id/resubmit
+  http.post("/api/v1/approvals/:id/resubmit", async ({ params, request }) => {
+    const body = (await request.json()) as any;
+    const found = MOCK_APPROVAL_REQUESTS.find((r) => r.request_id === params.id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    const updated = {
+      ...found,
+      state: "PENDING_REVIEW",
+      version: found.version + 1,
+      operations: body.revised_operations || found.operations,
+    };
+    return HttpResponse.json(updated);
+  }),
+
+  // GET /api/v1/audit/verify
+  http.get("/api/v1/audit/verify", () => {
+    return HttpResponse.json({
+      is_valid: true,
+      tenant_id: "default",
+      chain_length: MOCK_AUDIT_BLOCKS.length,
+      tampered_events_count: 0,
+      verified_at: new Date().toISOString(),
+      last_verified_hash: "mock_genesis_hash",
+      anomalies: null,
+    });
+  }),
+
   // GET /api/v1/execution/jobs
   http.get("/api/v1/execution/jobs", () => {
     return HttpResponse.json(MOCK_EXECUTION_JOBS);

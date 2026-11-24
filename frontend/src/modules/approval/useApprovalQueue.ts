@@ -7,6 +7,33 @@ import type {
 } from "./approvalTypes";
 import { filterAndSortApprovalRequests } from "./approvalStateMachine";
 import { approvalAdapter } from "./approvalAdapter";
+import { ApiError } from "../../api/client";
+
+function formatApprovalError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) {
+      return "Version Conflict (409): This approval request was updated concurrently or state changed. Please reload to inspect the latest state.";
+    }
+    if (err.status === 401) {
+      return "Authentication Required (401): Session expired or missing credentials. Please re-authenticate.";
+    }
+    if (err.status === 403) {
+      const body = err.body as { detail?: string } | undefined;
+      return body?.detail || "Authorization Denied (403): You lack permission or Two-Man Rule prohibits approving your own submission.";
+    }
+    if (err.status === 404) {
+      return "Not Found (404): The approval request was not found or belongs to another tenant.";
+    }
+    if (err.status === 410) {
+      return "Expired (410): The approval request deadline has expired and can no longer be modified.";
+    }
+    const body = err.body as { detail?: string } | undefined;
+    if (body?.detail) {
+      return body.detail;
+    }
+  }
+  return err instanceof Error ? err.message : fallback;
+}
 
 export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
   const [requests, setRequests] = React.useState<readonly ApprovalRequest[]>(initialRequests || []);
@@ -31,7 +58,7 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
       setRequests(data);
       setSelectedRequestId((prev) => (prev ? prev : data.length > 0 ? data[0]!.request_id : null));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load approval requests.");
+      setError(formatApprovalError(err, "Failed to load approval requests."));
     } finally {
       setIsLoading(false);
     }
@@ -66,6 +93,7 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
   const handleDecision = React.useCallback(
     async (payload: DecisionSubmitPayload) => {
       if (!selectedRequestId) return;
+      setError(null);
       try {
         const updated = await approvalAdapter.submitDecision({
           ...payload,
@@ -73,7 +101,8 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
         });
         setRequests((prev) => prev.map((r) => (r.request_id === updated.request_id ? updated : r)));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to submit decision.");
+        const msg = formatApprovalError(err, "Failed to submit decision.");
+        setError(msg);
         throw err;
       }
     },
@@ -83,6 +112,7 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
   const handleRevision = React.useCallback(
     async (payload: RevisionSubmitPayload) => {
       if (!selectedRequestId) return;
+      setError(null);
       try {
         const updated = await approvalAdapter.reviseRequest({
           ...payload,
@@ -90,12 +120,49 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
         });
         setRequests((prev) => prev.map((r) => (r.request_id === updated.request_id ? updated : r)));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to revise request.");
+        const msg = formatApprovalError(err, "Failed to revise request.");
+        setError(msg);
         throw err;
       }
     },
     [selectedRequestId]
   );
+
+  const handleCancel = React.useCallback(
+    async (rationale?: string) => {
+      if (!selectedRequest) return;
+      setError(null);
+      try {
+        const updated = await approvalAdapter.cancelRequest({
+          requestId: selectedRequest.request_id,
+          target_version: selectedRequest.version,
+          rationale,
+        });
+        setRequests((prev) => prev.map((r) => (r.request_id === updated.request_id ? updated : r)));
+      } catch (err) {
+        const msg = formatApprovalError(err, "Failed to cancel request.");
+        setError(msg);
+        throw err;
+      }
+    },
+    [selectedRequest]
+  );
+
+  const handleSubmitForReview = React.useCallback(async () => {
+    if (!selectedRequest) return;
+    setError(null);
+    try {
+      const updated = await approvalAdapter.submitForReview({
+        requestId: selectedRequest.request_id,
+        target_version: selectedRequest.version,
+      });
+      setRequests((prev) => prev.map((r) => (r.request_id === updated.request_id ? updated : r)));
+    } catch (err) {
+      const msg = formatApprovalError(err, "Failed to submit request for review.");
+      setError(msg);
+      throw err;
+    }
+  }, [selectedRequest]);
 
   return {
     requests,
@@ -110,5 +177,7 @@ export function useApprovalQueue(initialRequests?: readonly ApprovalRequest[]) {
     reload: loadRequests,
     handleDecision,
     handleRevision,
+    handleCancel,
+    handleSubmitForReview,
   };
 }
